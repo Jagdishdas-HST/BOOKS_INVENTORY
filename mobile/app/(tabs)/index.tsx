@@ -4,7 +4,7 @@ import { View, Text, ScrollView, Pressable, RefreshControl } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
-import { Plus, HandCoins, Boxes, Users, ChevronRight, TrendingUp } from "lucide-react-native";
+import { Plus, HandCoins, Boxes, Users, ChevronRight, TrendingUp, ShieldCheck } from "lucide-react-native";
 import { useAuth, authFetch, roleLabel } from "@/lib/auth";
 import { StatCard, Skeleton, EmptyState } from "@/components/ui";
 
@@ -20,6 +20,7 @@ export default function Home() {
   const [refreshing, setRefreshing] = useState(false);
 
   const isDistributor = user?.role === "distributor";
+  const isSuperAdmin = user?.role === "super_admin";
 
   useEffect(() => { if (!hydrated) hydrate(); }, [hydrated]);
   useEffect(() => { if (hydrated && !user) router.replace("/login"); }, [hydrated, user]);
@@ -135,6 +136,24 @@ export default function Home() {
                 </Pressable>
               </View>
             </View>
+
+            {isSuperAdmin && (
+              <View className="px-lg mt-md">
+                <Pressable onPress={() => router.push("/audit")} accessibilityLabel="View audit log"
+                  className="flex-row items-center justify-between rounded-xl bg-stone-900 p-md active:opacity-80">
+                  <View className="flex-row items-center gap-sm">
+                    <View className="w-9 h-9 rounded-full bg-stone-700 items-center justify-center">
+                      <ShieldCheck size={18} color="#fbbf24" />
+                    </View>
+                    <View>
+                      <Text className="text-white font-semibold">Audit Log</Text>
+                      <Text className="text-stone-400 text-xs">Append-only system activity</Text>
+                    </View>
+                  </View>
+                  <ChevronRight size={18} color="#a8a29e" />
+                </Pressable>
+              </View>
+            )}
 
             <View className="px-lg mt-xl">
               <View className="flex-row items-center gap-xs mb-sm">
