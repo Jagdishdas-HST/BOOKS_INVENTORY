@@ -1,7 +1,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { eq, and, desc, lte, sql } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { db, schema } from "../db/client";
 import { validateBody } from "../middleware/validate";
 import { HttpError, asyncHandler } from "../lib/httpError";
@@ -40,7 +40,28 @@ stockRouter.post("/assign", requireAuth, requireRole("super_admin", "inventory_m
   res.status(201).json({ ok: true });
 }));
 
-// Return distributor -> warehouse (or write-off if damaged)
+// Bulk stock intake (new print run received into warehouse)
+const Intake = z.object({
+  bookId: z.coerce.number().int(),
+  quantity: z.coerce.number().int().positive(),
+  reference: z.string().min(1).max(300).nullable().optional(),
+});
+
+stockRouter.post("/intake", requireAuth, requireRole("super_admin", "inventory_manager"), validateBody(Intake), asyncHandler(async (req: AuthedRequest, res) => {
+  const { bookId, quantity, reference } = req.body;
+  const [book] = await db.select().from(schema.books).where(eq(schema.books.id, bookId));
+  if (!book) throw new HttpError(404, "NOT_FOUND", "Book not found");
+
+  await db.update(schema.books).set({ warehouseStock: book.warehouseStock + quantity }).where(eq(schema.books.id, bookId));
+
+  await db.insert(schema.stockMovements).values({
+    bookId, distributorId: null, quantity, type: "stock_in", reason: reference ?? null, movedById: req.user!.id,
+  });
+  await logAudit(req.user!.id, "stock_in", "stock", `+${quantity}x ${book.title} received${reference ? ` (ref: ${reference})` : ""}`);
+  res.status(201).json({ ok: true });
+}));
+
+// Return distributor -> warehouse (with damaged write-off routing)
 const Return = z.object({
   bookId: z.coerce.number().int(),
   distributorId: z.coerce.number().int(),
@@ -52,83 +73,50 @@ stockRouter.post("/return", requireAuth, requireRole("super_admin", "inventory_m
   const { bookId, distributorId, quantity, reason } = req.body;
   const [book] = await db.select().from(schema.books).where(eq(schema.books.id, bookId));
   if (!book) throw new HttpError(404, "NOT_FOUND", "Book not found");
-
-  const [dist] = await db.select().from(schema.users).where(and(eq(schema.users.id, distributorId), eq(schema.users.role, "distributor")));
+  const [dist] = await db.select().from(schema.users).where(eq(schema.users.id, distributorId));
   if (!dist) throw new HttpError(404, "NOT_FOUND", "Distributor not found");
 
   const [ds] = await db.select().from(schema.distributorStock).where(and(eq(schema.distributorStock.distributorId, distributorId), eq(schema.distributorStock.bookId, bookId)));
-  const held = ds?.quantity ?? 0;
-  if (held < quantity) throw new HttpError(400, "INSUFFICIENT_STOCK", `Distributor only holds ${held} of this title`);
+  if (!ds || ds.quantity < quantity) throw new HttpError(400, "INSUFFICIENT_STOCK", `Distributor only holds ${ds?.quantity ?? 0}`);
 
-  // Reduce distributor holdings
-  await db.update(schema.distributorStock).set({ quantity: held - quantity }).where(eq(schema.distributorStock.id, ds!.id));
+  await db.update(schema.distributorStock).set({ quantity: ds.quantity - quantity }).where(eq(schema.distributorStock.id, ds.id));
 
   if (reason === "damaged") {
-    // Route to write-off count, NOT sellable warehouse stock
     await db.update(schema.books).set({ writeOffStock: book.writeOffStock + quantity }).where(eq(schema.books.id, bookId));
   } else {
     await db.update(schema.books).set({ warehouseStock: book.warehouseStock + quantity }).where(eq(schema.books.id, bookId));
   }
 
-  // Log as a return in movement history (negative-flagged via type). Quantity stored positive; type distinguishes direction.
   await db.insert(schema.stockMovements).values({ bookId, distributorId, quantity, type: "return", reason, movedById: req.user!.id });
   await logAudit(req.user!.id, "return", "stock", `${quantity}x ${book.title} ← ${dist.name} (${reason})`);
   res.status(201).json({ ok: true });
 }));
 
-// Reconciliation: enter a physical count, correct system count, log everything
+// Reconciliation adjustment
 const Reconcile = z.object({
   bookId: z.coerce.number().int(),
-  // scope: "warehouse" or a distributorId (per-distributor count)
-  distributorId: z.coerce.number().int().nullable().optional(),
   physicalCount: z.coerce.number().int().nonnegative(),
-  note: z.string().max(500).nullable().optional(),
+  note: z.string().max(300).nullable().optional(),
 });
 
 stockRouter.post("/reconcile", requireAuth, requireRole("super_admin", "inventory_manager"), validateBody(Reconcile), asyncHandler(async (req: AuthedRequest, res) => {
-  const { bookId, distributorId, physicalCount, note } = req.body;
+  const { bookId, physicalCount, note } = req.body;
   const [book] = await db.select().from(schema.books).where(eq(schema.books.id, bookId));
   if (!book) throw new HttpError(404, "NOT_FOUND", "Book not found");
-
-  if (distributorId) {
-    const [dist] = await db.select().from(schema.users).where(and(eq(schema.users.id, distributorId), eq(schema.users.role, "distributor")));
-    if (!dist) throw new HttpError(404, "NOT_FOUND", "Distributor not found");
-    const [ds] = await db.select().from(schema.distributorStock).where(and(eq(schema.distributorStock.distributorId, distributorId), eq(schema.distributorStock.bookId, bookId)));
-    const oldCount = ds?.quantity ?? 0;
-    if (ds) {
-      await db.update(schema.distributorStock).set({ quantity: physicalCount }).where(eq(schema.distributorStock.id, ds.id));
-    } else {
-      await db.insert(schema.distributorStock).values({ distributorId, bookId, quantity: physicalCount });
-    }
-    const variance = physicalCount - oldCount;
-    await logAudit(req.user!.id, "reconcile", "stock",
-      `${book.title} · ${dist.name} · system ${oldCount} → physical ${physicalCount} (var ${variance >= 0 ? "+" : ""}${variance})${note ? ` · ${note}` : ""}`);
-    res.status(201).json({ ok: true, oldCount, newCount: physicalCount, variance });
-    return;
-  }
-
-  // Warehouse reconciliation
   const oldCount = book.warehouseStock;
+  const diff = physicalCount - oldCount;
+
   await db.update(schema.books).set({ warehouseStock: physicalCount }).where(eq(schema.books.id, bookId));
-  const variance = physicalCount - oldCount;
-  await logAudit(req.user!.id, "reconcile", "stock",
-    `${book.title} · Warehouse · system ${oldCount} → physical ${physicalCount} (var ${variance >= 0 ? "+" : ""}${variance})${note ? ` · ${note}` : ""}`);
-  res.status(201).json({ ok: true, oldCount, newCount: physicalCount, variance });
+  await db.insert(schema.stockMovements).values({ bookId, distributorId: null, quantity: diff, type: "adjust", reason: note ?? null, movedById: req.user!.id });
+  await logAudit(req.user!.id, "adjust", "stock", `${book.title}: ${oldCount} → ${physicalCount}${note ? ` (${note})` : ""}`);
+  res.status(201).json({ ok: true });
 }));
 
-// Low-stock: books at or below their reorder threshold (admin/manager)
+// Low stock books (at or below threshold)
 stockRouter.get("/low-stock", requireAuth, requireRole("super_admin", "inventory_manager"), asyncHandler(async (_req, res) => {
-  const rows = await db.select({
-    id: schema.books.id,
-    title: schema.books.title,
-    sku: schema.books.sku,
-    warehouseStock: schema.books.warehouseStock,
-    reorderThreshold: schema.books.reorderThreshold,
-    writeOffStock: schema.books.writeOffStock,
-  }).from(schema.books)
-    .where(and(eq(schema.books.active, true), lte(schema.books.warehouseStock, schema.books.reorderThreshold)))
-    .orderBy(schema.books.warehouseStock);
-  res.json(rows);
+  const all = await db.select().from(schema.books).where(eq(schema.books.active, true));
+  const low = all.filter((b) => b.warehouseStock <= b.reorderThreshold);
+  res.json(low);
 }));
 
 // Distributor stock (own for distributor, or by ?distributorId for admin/manager)
@@ -146,6 +134,8 @@ stockRouter.get("/holdings", requireAuth, asyncHandler(async (req: AuthedRequest
     category: schema.books.category,
     language: schema.books.language,
     retailPrice: schema.books.retailPrice,
+    coverUrl: schema.books.coverUrl,
+    isbn: schema.books.isbn,
   }).from(schema.distributorStock)
     .innerJoin(schema.books, eq(schema.distributorStock.bookId, schema.books.id))
     .where(eq(schema.distributorStock.distributorId, distId))
@@ -153,7 +143,7 @@ stockRouter.get("/holdings", requireAuth, asyncHandler(async (req: AuthedRequest
   res.json(rows);
 }));
 
-// Movement history (assignments + returns)
+// Movement history
 stockRouter.get("/movements", requireAuth, requireRole("super_admin", "inventory_manager"), asyncHandler(async (_req, res) => {
   const rows = await db.select({
     id: schema.stockMovements.id,
@@ -165,7 +155,7 @@ stockRouter.get("/movements", requireAuth, requireRole("super_admin", "inventory
     distributorName: schema.users.name,
   }).from(schema.stockMovements)
     .innerJoin(schema.books, eq(schema.stockMovements.bookId, schema.books.id))
-    .innerJoin(schema.users, eq(schema.stockMovements.distributorId, schema.users.id))
+    .leftJoin(schema.users, eq(schema.stockMovements.distributorId, schema.users.id))
     .orderBy(desc(schema.stockMovements.createdAt))
     .limit(100);
   res.json(rows);

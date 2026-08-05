@@ -1,11 +1,14 @@
 
 import { useState } from "react";
-import { View, Text, ScrollView, TextInput, Pressable } from "react-native";
+import { View, Text, ScrollView, TextInput, Pressable, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
-import { ChevronLeft } from "lucide-react-native";
+import { Image } from "expo-image";
+import * as ImagePicker from "expo-image-picker";
+import { ChevronLeft, ImagePlus } from "lucide-react-native";
 import { authFetch } from "@/lib/auth";
+import { uploadImage } from "@/lib/upload";
 import { Button, Chip } from "@/components/ui";
 import { haptics } from "@/lib/haptics";
 
@@ -21,8 +24,23 @@ export default function NewBook() {
   const [retail, setRetail] = useState("");
   const [stock, setStock] = useState("");
   const [threshold, setThreshold] = useState("");
+  const [isbn, setIsbn] = useState("");
+  const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  const [coverKey, setCoverKey] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const pickCover = async () => {
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.8 });
+    if (res.canceled) return;
+    setUploading(true); setError("");
+    try {
+      const up = await uploadImage(res.assets[0]);
+      setCoverUrl(up.url); setCoverKey(up.key);
+    } catch (e: any) { setError(e.message); }
+    setUploading(false);
+  };
 
   const submit = async () => {
     setError("");
@@ -31,9 +49,9 @@ export default function NewBook() {
     try {
       await authFetch("/api/books", { method: "POST", body: JSON.stringify({
         sku: sku.trim(), title: title.trim(), category, language: language.trim() || "English",
-        costPrice: parseFloat(cost), retailPrice: parseFloat(retail),
-        warehouseStock: parseInt(stock || "0", 10),
-        reorderThreshold: threshold.trim() ? parseInt(threshold, 10) : 10,
+        costPrice: parseFloat(cost), retailPrice: parseFloat(retail), warehouseStock: parseInt(stock || "0", 10),
+        reorderThreshold: threshold ? parseInt(threshold, 10) : undefined,
+        isbn: isbn.trim() || null, coverUrl, coverKey,
       }) });
       haptics.success();
       router.back();
@@ -44,7 +62,7 @@ export default function NewBook() {
     <View className="mb-md">
       <Text className="text-stone-600 text-sm font-medium mb-xs">{label}</Text>
       <TextInput value={value} onChangeText={set} keyboardType={kb} placeholder={ph} placeholderTextColor="#a8a29e"
-        autoCapitalize={kb === "default" ? "none" : "none"}
+        autoCapitalize="none"
         className="rounded-xl bg-white border border-stone-200 px-md py-md text-stone-900" />
     </View>
   );
@@ -58,8 +76,22 @@ export default function NewBook() {
       </View>
 
       <ScrollView className="flex-1" contentContainerClassName="px-lg pb-3xl" showsVerticalScrollIndicator={false}>
+        <Text className="text-stone-600 text-sm font-medium mb-sm">Cover Image</Text>
+        <Pressable onPress={pickCover} accessibilityLabel="Upload cover"
+          className="mb-md h-40 rounded-xl bg-white border border-dashed border-stone-300 items-center justify-center overflow-hidden">
+          {uploading ? <ActivityIndicator color="#d97706" /> : coverUrl ? (
+            <Image source={coverUrl} style={{ width: "100%", height: "100%" }} contentFit="cover" />
+          ) : (
+            <View className="items-center">
+              <ImagePlus size={28} color="#a8a29e" />
+              <Text className="text-stone-400 text-sm mt-xs">Tap to add cover</Text>
+            </View>
+          )}
+        </Pressable>
+
         {field("SKU", sku, setSku, "default", "BG-EN-001")}
         {field("Title", title, setTitle, "default", "Bhagavad-gita As It Is")}
+        {field("ISBN / Barcode (optional)", isbn, setIsbn, "default", "9789383095001")}
 
         <Text className="text-stone-600 text-sm font-medium mb-sm">Category</Text>
         <View className="py-xs mb-md">
@@ -75,7 +107,7 @@ export default function NewBook() {
         </View>
         <View className="flex-row gap-sm">
           <View className="flex-1">{field("Initial warehouse stock", stock, setStock, "number-pad", "200")}</View>
-          <View className="flex-1">{field("Reorder at ≤ (optional)", threshold, setThreshold, "number-pad", "10")}</View>
+          <View className="flex-1">{field("Reorder threshold", threshold, setThreshold, "number-pad", "20")}</View>
         </View>
 
         {error ? <Text className="text-rose-600 text-sm mb-sm">{error}</Text> : null}
