@@ -4,7 +4,7 @@ import { View, Text, ScrollView, Pressable, RefreshControl } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
-import { Plus, HandCoins, Boxes, Users, ChevronRight, TrendingUp, ShieldCheck } from "lucide-react-native";
+import { Plus, HandCoins, Boxes, Users, ChevronRight, TrendingUp, ShieldCheck, BarChart3 } from "lucide-react-native";
 import { useAuth, authFetch, roleLabel } from "@/lib/auth";
 import { StatCard, Skeleton, EmptyState } from "@/components/ui";
 
@@ -21,6 +21,7 @@ export default function Home() {
 
   const isDistributor = user?.role === "distributor";
   const isSuperAdmin = user?.role === "super_admin";
+  const isManagerOrAdmin = user?.role === "super_admin" || user?.role === "inventory_manager";
 
   useEffect(() => { if (!hydrated) hydrate(); }, [hydrated]);
   useEffect(() => { if (hydrated && !user) router.replace("/login"); }, [hydrated, user]);
@@ -136,6 +137,24 @@ export default function Home() {
                 </Pressable>
               </View>
             </View>
+
+            {isManagerOrAdmin && (
+              <View className="px-lg mt-md">
+                <Pressable onPress={() => router.push("/reports")} accessibilityLabel="View reports"
+                  className="flex-row items-center justify-between rounded-xl bg-amber-50 border border-amber-200 p-md active:opacity-80">
+                  <View className="flex-row items-center gap-sm">
+                    <View className="w-9 h-9 rounded-full bg-amber-600 items-center justify-center">
+                      <BarChart3 size={18} color="#fff" />
+                    </View>
+                    <View>
+                      <Text className="text-stone-900 font-semibold">Reports & Analytics</Text>
+                      <Text className="text-stone-500 text-xs">Sales, leaderboard & top titles</Text>
+                    </View>
+                  </View>
+                  <ChevronRight size={18} color="#d97706" />
+                </Pressable>
+              </View>
+            )}
 
             {isSuperAdmin && (
               <View className="px-lg mt-md">
