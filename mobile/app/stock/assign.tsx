@@ -1,0 +1,94 @@
+
+import { useEffect, useState } from "react";
+import { View, Text, ScrollView, TextInput, Pressable } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
+import { useRouter } from "expo-router";
+import { ChevronLeft, Check } from "lucide-react-native";
+import { authFetch } from "@/lib/auth";
+import { Button, Skeleton } from "@/components/ui";
+import { haptics } from "@/lib/haptics";
+
+export default function AssignStock() {
+  const router = useRouter();
+  const [books, setBooks] = useState<any[]>([]);
+  const [dists, setDists] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [book, setBook] = useState<any>(null);
+  const [dist, setDist] = useState<any>(null);
+  const [qty, setQty] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    Promise.all([authFetch("/api/books"), authFetch("/api/users/distributors")]).then(([b, d]) => {
+      setBooks(b.filter((x: any) => x.active)); setDists(d.filter((x: any) => x.active)); setLoading(false);
+    }).catch(() => setLoading(false));
+  }, []);
+
+  const submit = async () => {
+    setError("");
+    if (!book) { setError("Select a book"); return; }
+    if (!dist) { setError("Select a distributor"); return; }
+    const q = parseInt(qty, 10);
+    if (!q || q < 1) { setError("Enter a valid quantity"); return; }
+    if (q > book.warehouseStock) { setError(`Only ${book.warehouseStock} in warehouse`); return; }
+    setSaving(true);
+    try {
+      await authFetch("/api/stock/assign", { method: "POST", body: JSON.stringify({ bookId: book.id, distributorId: dist.id, quantity: q }) });
+      haptics.success();
+      router.back();
+    } catch (e: any) { setError(e.message); setSaving(false); }
+  };
+
+  return (
+    <SafeAreaView edges={["top"]} className="flex-1 bg-stone-50">
+      <StatusBar style="dark" />
+      <View className="flex-row items-center px-lg pt-md pb-sm gap-sm">
+        <Pressable onPress={() => router.back()} accessibilityLabel="Back"><ChevronLeft size={26} color="#292524" /></Pressable>
+        <Text className="text-stone-900 text-xl font-extrabold">Assign Stock</Text>
+      </View>
+
+      <ScrollView className="flex-1" contentContainerClassName="px-lg pb-3xl" showsVerticalScrollIndicator={false}>
+        {loading ? <Skeleton count={4} /> : (
+          <>
+            <Text className="text-stone-600 text-sm font-medium mb-sm">Book</Text>
+            <View className="gap-sm">
+              {books.map((b) => (
+                <Pressable key={b.id} onPress={() => { setBook(b); haptics.selection(); }}
+                  className={`flex-row items-center justify-between rounded-xl border p-md ${book?.id === b.id ? "border-amber-600 bg-amber-50" : "border-stone-200 bg-white"}`}>
+                  <View className="flex-1">
+                    <Text className="text-stone-900 font-semibold" numberOfLines={1}>{b.title}</Text>
+                    <Text className="text-stone-500 text-xs">{b.warehouseStock} in warehouse</Text>
+                  </View>
+                  {book?.id === b.id && <Check size={18} color="#d97706" />}
+                </Pressable>
+              ))}
+            </View>
+
+            <Text className="text-stone-600 text-sm font-medium mt-lg mb-sm">Distributor</Text>
+            <View className="gap-sm">
+              {dists.map((d) => (
+                <Pressable key={d.id} onPress={() => { setDist(d); haptics.selection(); }}
+                  className={`flex-row items-center justify-between rounded-xl border p-md ${dist?.id === d.id ? "border-amber-600 bg-amber-50" : "border-stone-200 bg-white"}`}>
+                  <Text className="text-stone-900 font-semibold">{d.name}</Text>
+                  {dist?.id === d.id && <Check size={18} color="#d97706" />}
+                </Pressable>
+              ))}
+            </View>
+
+            <Text className="text-stone-600 text-sm font-medium mt-lg mb-xs">Quantity</Text>
+            <TextInput value={qty} onChangeText={setQty} keyboardType="number-pad" placeholder="20" placeholderTextColor="#a8a29e"
+              className="rounded-xl bg-white border border-stone-200 px-md py-md text-stone-900 text-lg" />
+
+            {error ? <Text className="text-rose-600 text-sm mt-sm">{error}</Text> : null}
+
+            <View className="mt-lg">
+              <Button label="Assign to Distributor" onPress={submit} loading={saving} />
+            </View>
+          </>
+        )}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}

@@ -1,12 +1,13 @@
+
 {
   "expo": {
-    "name": "Joylo App",
+    "name": "Inventory Tracker",
     "slug": "joylo-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "joyloapp",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": false
