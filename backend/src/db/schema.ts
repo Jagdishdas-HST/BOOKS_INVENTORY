@@ -20,6 +20,8 @@ export const books = pgTable("books", {
   costPrice: numeric("cost_price", { precision: 12, scale: 2 }).notNull(),
   retailPrice: numeric("retail_price", { precision: 12, scale: 2 }).notNull(),
   warehouseStock: integer("warehouse_stock").notNull().default(0),
+  writeOffStock: integer("write_off_stock").notNull().default(0),
+  reorderThreshold: integer("reorder_threshold").notNull().default(10),
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
@@ -36,6 +38,10 @@ export const stockMovements = pgTable("stock_movements", {
   bookId: integer("book_id").references(() => books.id).notNull(),
   distributorId: integer("distributor_id").references(() => users.id).notNull(),
   quantity: integer("quantity").notNull(),
+  // "assign" (warehouse -> distributor) or "return" (distributor -> warehouse)
+  type: text("type").$type<"assign" | "return">().notNull().default("assign"),
+  // For returns: "unsold" | "damaged" | "reassigned"
+  reason: text("reason"),
   movedById: integer("moved_by_id").references(() => users.id).notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

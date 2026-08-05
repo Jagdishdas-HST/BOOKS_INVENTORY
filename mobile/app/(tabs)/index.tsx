@@ -4,7 +4,7 @@ import { View, Text, ScrollView, Pressable, RefreshControl } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
-import { Plus, HandCoins, Boxes, Users, ChevronRight, TrendingUp, ShieldCheck, BarChart3 } from "lucide-react-native";
+import { Plus, HandCoins, Boxes, Users, ChevronRight, TrendingUp, ShieldCheck, BarChart3, AlertTriangle, Undo2, ClipboardCheck } from "lucide-react-native";
 import { useAuth, authFetch, roleLabel } from "@/lib/auth";
 import { StatCard, Skeleton, EmptyState } from "@/components/ui";
 
@@ -16,6 +16,7 @@ export default function Home() {
   const [balance, setBalance] = useState<any>(null);
   const [holdings, setHoldings] = useState<any[]>([]);
   const [distributors, setDistributors] = useState<any[]>([]);
+  const [lowStock, setLowStock] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -33,8 +34,8 @@ export default function Home() {
         const [b, h] = await Promise.all([authFetch("/api/sales/balance"), authFetch("/api/stock/holdings")]);
         setBalance(b); setHoldings(h);
       } else {
-        const d = await authFetch("/api/users/distributors");
-        setDistributors(d);
+        const [d, ls] = await Promise.all([authFetch("/api/users/distributors"), authFetch("/api/stock/low-stock")]);
+        setDistributors(d); setLowStock(ls);
       }
     } catch {}
     setLoading(false);
@@ -123,6 +124,30 @@ export default function Home() {
           </>
         ) : (
           <>
+            {/* Low-stock alert banner (admin/manager only) */}
+            {!loading && lowStock.length > 0 && (
+              <View className="mx-lg mb-md rounded-xl bg-rose-50 border border-rose-200 p-md">
+                <View className="flex-row items-center gap-xs mb-xs">
+                  <AlertTriangle size={18} color="#e11d48" />
+                  <Text className="text-rose-700 font-bold">{lowStock.length} title{lowStock.length === 1 ? "" : "s"} low on stock</Text>
+                </View>
+                <View className="gap-xs mt-xs">
+                  {lowStock.slice(0, 4).map((b) => (
+                    <Pressable key={b.id} onPress={() => router.push({ pathname: "/book/[id]", params: { id: String(b.id) } })}
+                      className="flex-row items-center justify-between active:opacity-70">
+                      <Text className="text-stone-800 text-sm flex-1" numberOfLines={1}>{b.title}</Text>
+                      <Text className="text-rose-700 text-sm font-semibold ml-sm">
+                        {b.warehouseStock} left · reorder ≤{b.reorderThreshold}
+                      </Text>
+                    </Pressable>
+                  ))}
+                  {lowStock.length > 4 && (
+                    <Text className="text-rose-600 text-xs mt-xs">+{lowStock.length - 4} more below threshold</Text>
+                  )}
+                </View>
+              </View>
+            )}
+
             <View className="px-lg">
               <View className="flex-row gap-sm">
                 <Pressable onPress={() => router.push("/stock/assign")} accessibilityLabel="Assign stock"
@@ -134,6 +159,18 @@ export default function Home() {
                   className="flex-1 flex-row items-center justify-center gap-xs rounded-xl bg-stone-200 py-md active:opacity-70">
                   <TrendingUp size={16} color="#292524" />
                   <Text className="text-stone-900 font-semibold">Catalog</Text>
+                </Pressable>
+              </View>
+              <View className="flex-row gap-sm mt-sm">
+                <Pressable onPress={() => router.push("/stock/return")} accessibilityLabel="Return stock"
+                  className="flex-1 flex-row items-center justify-center gap-xs rounded-xl bg-stone-200 py-md active:opacity-70">
+                  <Undo2 size={16} color="#292524" />
+                  <Text className="text-stone-900 font-semibold">Return Stock</Text>
+                </Pressable>
+                <Pressable onPress={() => router.push("/stock/reconcile")} accessibilityLabel="Reconcile stock"
+                  className="flex-1 flex-row items-center justify-center gap-xs rounded-xl bg-stone-200 py-md active:opacity-70">
+                  <ClipboardCheck size={16} color="#292524" />
+                  <Text className="text-stone-900 font-semibold">Reconcile</Text>
                 </Pressable>
               </View>
             </View>

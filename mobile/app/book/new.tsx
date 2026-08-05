@@ -20,6 +20,7 @@ export default function NewBook() {
   const [cost, setCost] = useState("");
   const [retail, setRetail] = useState("");
   const [stock, setStock] = useState("");
+  const [threshold, setThreshold] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -30,7 +31,9 @@ export default function NewBook() {
     try {
       await authFetch("/api/books", { method: "POST", body: JSON.stringify({
         sku: sku.trim(), title: title.trim(), category, language: language.trim() || "English",
-        costPrice: parseFloat(cost), retailPrice: parseFloat(retail), warehouseStock: parseInt(stock || "0", 10),
+        costPrice: parseFloat(cost), retailPrice: parseFloat(retail),
+        warehouseStock: parseInt(stock || "0", 10),
+        reorderThreshold: threshold.trim() ? parseInt(threshold, 10) : 10,
       }) });
       haptics.success();
       router.back();
@@ -70,7 +73,10 @@ export default function NewBook() {
           <View className="flex-1">{field("Cost (₹)", cost, setCost, "decimal-pad", "120")}</View>
           <View className="flex-1">{field("Retail (₹)", retail, setRetail, "decimal-pad", "350")}</View>
         </View>
-        {field("Initial warehouse stock", stock, setStock, "number-pad", "200")}
+        <View className="flex-row gap-sm">
+          <View className="flex-1">{field("Initial warehouse stock", stock, setStock, "number-pad", "200")}</View>
+          <View className="flex-1">{field("Reorder at ≤ (optional)", threshold, setThreshold, "number-pad", "10")}</View>
+        </View>
 
         {error ? <Text className="text-rose-600 text-sm mb-sm">{error}</Text> : null}
         <Button label="Add to Catalog" onPress={submit} loading={saving} />

@@ -23,6 +23,7 @@ const CreateBook = z.object({
   costPrice: z.coerce.number().nonnegative(),
   retailPrice: z.coerce.number().nonnegative(),
   warehouseStock: z.coerce.number().int().nonnegative().default(0),
+  reorderThreshold: z.coerce.number().int().nonnegative().default(10),
 });
 
 booksRouter.post("/", requireAuth, requireRole("super_admin", "inventory_manager"), validateBody(CreateBook), asyncHandler(async (req: AuthedRequest, res) => {
@@ -31,7 +32,8 @@ booksRouter.post("/", requireAuth, requireRole("super_admin", "inventory_manager
   if (existing) throw new HttpError(400, "DUPLICATE", "SKU already exists");
   const [row] = await db.insert(schema.books).values({
     sku: b.sku, title: b.title, category: b.category, language: b.language,
-    costPrice: String(b.costPrice), retailPrice: String(b.retailPrice), warehouseStock: b.warehouseStock,
+    costPrice: String(b.costPrice), retailPrice: String(b.retailPrice),
+    warehouseStock: b.warehouseStock, reorderThreshold: b.reorderThreshold,
   }).returning();
   await logAudit(req.user!.id, "create", "book", `${row.title} (${row.sku})`);
   res.status(201).json(row);
@@ -44,6 +46,7 @@ const UpdateBook = z.object({
   costPrice: z.coerce.number().nonnegative().optional(),
   retailPrice: z.coerce.number().nonnegative().optional(),
   warehouseStock: z.coerce.number().int().nonnegative().optional(),
+  reorderThreshold: z.coerce.number().int().nonnegative().optional(),
   active: z.coerce.boolean().optional(),
 });
 
@@ -57,6 +60,7 @@ booksRouter.patch("/:id", requireAuth, requireRole("super_admin", "inventory_man
   if (b.costPrice !== undefined) patch.costPrice = String(b.costPrice);
   if (b.retailPrice !== undefined) patch.retailPrice = String(b.retailPrice);
   if (b.warehouseStock !== undefined) patch.warehouseStock = b.warehouseStock;
+  if (b.reorderThreshold !== undefined) patch.reorderThreshold = b.reorderThreshold;
   if (b.active !== undefined) patch.active = b.active;
   const [row] = await db.update(schema.books).set(patch).where(eq(schema.books.id, id)).returning();
   if (!row) throw new HttpError(404, "NOT_FOUND", "Book not found");

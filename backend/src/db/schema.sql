@@ -1,12 +1,14 @@
 
+-- Phase additions are appended as idempotent ALTERs so existing DBs upgrade cleanly.
+
 CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   username TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL,
-  active BOOLEAN NOT NULL DEFAULT TRUE,
-  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+  active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS books (
@@ -18,8 +20,8 @@ CREATE TABLE IF NOT EXISTS books (
   cost_price NUMERIC(12,2) NOT NULL,
   retail_price NUMERIC(12,2) NOT NULL,
   warehouse_stock INTEGER NOT NULL DEFAULT 0,
-  active BOOLEAN NOT NULL DEFAULT TRUE,
-  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+  active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS distributor_stock (
@@ -28,7 +30,6 @@ CREATE TABLE IF NOT EXISTS distributor_stock (
   book_id INTEGER NOT NULL REFERENCES books(id),
   quantity INTEGER NOT NULL DEFAULT 0
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_dist_stock_unique ON distributor_stock(distributor_id, book_id);
 
 CREATE TABLE IF NOT EXISTS stock_movements (
   id SERIAL PRIMARY KEY,
@@ -36,10 +37,8 @@ CREATE TABLE IF NOT EXISTS stock_movements (
   distributor_id INTEGER NOT NULL REFERENCES users(id),
   quantity INTEGER NOT NULL,
   moved_by_id INTEGER NOT NULL REFERENCES users(id),
-  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_movements_dist ON stock_movements(distributor_id);
-CREATE INDEX IF NOT EXISTS idx_movements_book ON stock_movements(book_id);
 
 CREATE TABLE IF NOT EXISTS sales (
   id SERIAL PRIMARY KEY,
@@ -49,18 +48,16 @@ CREATE TABLE IF NOT EXISTS sales (
   unit_price NUMERIC(12,2) NOT NULL,
   total_value NUMERIC(12,2) NOT NULL,
   payment_type TEXT NOT NULL,
-  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_sales_dist ON sales(distributor_id);
 
 CREATE TABLE IF NOT EXISTS remittances (
   id SERIAL PRIMARY KEY,
   distributor_id INTEGER NOT NULL REFERENCES users(id),
   amount NUMERIC(12,2) NOT NULL,
   note TEXT,
-  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_remit_dist ON remittances(distributor_id);
 
 CREATE TABLE IF NOT EXISTS audit_log (
   id SERIAL PRIMARY KEY,
@@ -68,6 +65,13 @@ CREATE TABLE IF NOT EXISTS audit_log (
   action TEXT NOT NULL,
   entity TEXT NOT NULL,
   details TEXT,
-  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
+
+-- Phase 4: returns / write-offs / low-stock / reconciliation
+ALTER TABLE books ADD COLUMN IF NOT EXISTS write_off_stock INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE books ADD COLUMN IF NOT EXISTS reorder_threshold INTEGER NOT NULL DEFAULT 10;
+ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'assign';
+ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS reason TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_movements_created_at ON stock_movements(created_at);

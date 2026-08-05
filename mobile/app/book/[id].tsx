@@ -4,7 +4,7 @@ import { View, Text, ScrollView, TextInput, Pressable } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { useRouter, useLocalSearchParams } from "expo-router";
-import { ChevronLeft } from "lucide-react-native";
+import { ChevronLeft, AlertTriangle } from "lucide-react-native";
 import { authFetch } from "@/lib/auth";
 import { Button, Skeleton } from "@/components/ui";
 import { haptics } from "@/lib/haptics";
@@ -18,13 +18,17 @@ export default function BookDetail() {
   const [cost, setCost] = useState("");
   const [retail, setRetail] = useState("");
   const [stock, setStock] = useState("");
+  const [threshold, setThreshold] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     authFetch("/api/books").then((rows) => {
       const b = rows.find((x: any) => String(x.id) === String(id));
-      if (b) { setBook(b); setTitle(b.title); setCost(String(b.costPrice)); setRetail(String(b.retailPrice)); setStock(String(b.warehouseStock)); }
+      if (b) {
+        setBook(b); setTitle(b.title); setCost(String(b.costPrice)); setRetail(String(b.retailPrice));
+        setStock(String(b.warehouseStock)); setThreshold(String(b.reorderThreshold ?? 10));
+      }
       setLoading(false);
     }).catch(() => setLoading(false));
   }, [id]);
@@ -33,7 +37,8 @@ export default function BookDetail() {
     setError(""); setSaving(true);
     try {
       await authFetch(`/api/books/${id}`, { method: "PATCH", body: JSON.stringify({
-        title: title.trim(), costPrice: parseFloat(cost), retailPrice: parseFloat(retail), warehouseStock: parseInt(stock || "0", 10),
+        title: title.trim(), costPrice: parseFloat(cost), retailPrice: parseFloat(retail),
+        warehouseStock: parseInt(stock || "0", 10), reorderThreshold: parseInt(threshold || "0", 10),
       }) });
       haptics.success();
       router.back();
@@ -43,6 +48,8 @@ export default function BookDetail() {
   const toggleRetire = async () => {
     try { await authFetch(`/api/books/${id}`, { method: "PATCH", body: JSON.stringify({ active: !book.active }) }); haptics.medium(); router.back(); } catch (e: any) { setError(e.message); }
   };
+
+  const isLow = book && book.warehouseStock <= (book.reorderThreshold ?? 10);
 
   return (
     <SafeAreaView edges={["top"]} className="flex-1 bg-stone-50">
@@ -57,7 +64,18 @@ export default function BookDetail() {
           <>
             <View className="rounded-xl bg-white border border-stone-200 p-md mb-lg">
               <Text className="text-stone-500 text-xs">{book.sku} · {book.category} · {book.language}</Text>
+              {book.writeOffStock > 0 && (
+                <Text className="text-rose-600 text-xs mt-xs">Write-off (damaged): {book.writeOffStock} copies</Text>
+              )}
             </View>
+
+            {isLow && (
+              <View className="flex-row items-center gap-xs rounded-xl bg-rose-50 border border-rose-200 p-md mb-lg">
+                <AlertTriangle size={18} color="#e11d48" />
+                <Text className="text-rose-700 text-sm font-semibold flex-1">Low stock — at or below reorder threshold.</Text>
+              </View>
+            )}
+
             <View className="mb-md">
               <Text className="text-stone-600 text-sm font-medium mb-xs">Title</Text>
               <TextInput value={title} onChangeText={setTitle} className="rounded-xl bg-white border border-stone-200 px-md py-md text-stone-900" />
@@ -72,9 +90,15 @@ export default function BookDetail() {
                 <TextInput value={retail} onChangeText={setRetail} keyboardType="decimal-pad" className="rounded-xl bg-white border border-stone-200 px-md py-md text-stone-900" />
               </View>
             </View>
-            <View className="mb-md">
-              <Text className="text-stone-600 text-sm font-medium mb-xs">Warehouse stock</Text>
-              <TextInput value={stock} onChangeText={setStock} keyboardType="number-pad" className="rounded-xl bg-white border border-stone-200 px-md py-md text-stone-900" />
+            <View className="flex-row gap-sm">
+              <View className="flex-1 mb-md">
+                <Text className="text-stone-600 text-sm font-medium mb-xs">Warehouse stock</Text>
+                <TextInput value={stock} onChangeText={setStock} keyboardType="number-pad" className="rounded-xl bg-white border border-stone-200 px-md py-md text-stone-900" />
+              </View>
+              <View className="flex-1 mb-md">
+                <Text className="text-stone-600 text-sm font-medium mb-xs">Reorder at ≤</Text>
+                <TextInput value={threshold} onChangeText={setThreshold} keyboardType="number-pad" placeholder="10" placeholderTextColor="#a8a29e" className="rounded-xl bg-white border border-stone-200 px-md py-md text-stone-900" />
+              </View>
             </View>
 
             {error ? <Text className="text-rose-600 text-sm mb-sm">{error}</Text> : null}
