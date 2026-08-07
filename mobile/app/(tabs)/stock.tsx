@@ -4,7 +4,7 @@ import { View, Text, ScrollView, Pressable, RefreshControl } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
-import { Plus, ArrowRightLeft, ArrowDownLeft, PackagePlus, SlidersHorizontal } from "lucide-react-native";
+import { Plus, ArrowRightLeft, ArrowDownLeft, PackagePlus, SlidersHorizontal, Repeat } from "lucide-react-native";
 import { format } from "date-fns";
 import { authFetch, useAuth } from "@/lib/auth";
 import { Skeleton, EmptyState } from "@/components/ui";
@@ -15,6 +15,7 @@ function movementMeta(type: string) {
     case "stock_in": return { icon: PackagePlus, color: "#059669", bg: "bg-emerald-100", sign: "+", label: "Stock in" };
     case "return": return { icon: ArrowDownLeft, color: "#2563eb", bg: "bg-blue-100", sign: "+", label: "Return" };
     case "adjust": return { icon: SlidersHorizontal, color: "#7c3aed", bg: "bg-violet-100", sign: "", label: "Adjust" };
+    case "transfer": return { icon: Repeat, color: "#0891b2", bg: "bg-cyan-100", sign: "→", label: "Transfer" };
     default: return { icon: ArrowRightLeft, color: "#b45309", bg: "bg-amber-100", sign: "-", label: "Assign" };
   }
 }
@@ -40,6 +41,10 @@ export default function Stock() {
       <View className="flex-row items-center justify-between px-lg pt-md pb-sm">
         <Text className="text-stone-900 text-2xl font-extrabold">Stock Movement</Text>
         <View className="flex-row gap-sm">
+          <Pressable onPress={() => router.push("/stock/transfer")} accessibilityLabel="Transfer stock"
+            className="w-10 h-10 rounded-full bg-cyan-600 items-center justify-center active:opacity-80">
+            <ArrowRightLeft size={20} color="#fff" />
+          </Pressable>
           <Pressable onPress={() => router.push("/stock/intake")} accessibilityLabel="Stock intake"
             className="w-10 h-10 rounded-full bg-emerald-600 items-center justify-center active:opacity-80">
             <PackagePlus size={20} color="#fff" />
@@ -68,6 +73,9 @@ export default function Stock() {
             {movements.map((m) => {
               const meta = movementMeta(m.type);
               const Icon = meta.icon;
+              const detail = m.type === "transfer"
+                ? `${m.distributorName ?? "?"} → ${m.toDistributorName ?? "?"}`
+                : (m.distributorName ? m.distributorName : m.reason ? m.reason : "");
               return (
                 <View key={m.id} className="flex-row items-center rounded-xl bg-white border border-stone-200 p-md">
                   <View className={`w-10 h-10 rounded-full items-center justify-center mr-sm ${meta.bg}`}>
@@ -77,7 +85,7 @@ export default function Stock() {
                     <Text className="text-stone-900 font-semibold" numberOfLines={1}>{m.bookTitle}</Text>
                     <Text className="text-stone-500 text-xs">
                       {meta.label}
-                      {m.distributorName ? ` · ${m.distributorName}` : m.reason ? ` · ${m.reason}` : ""}
+                      {detail ? ` · ${detail}` : ""}
                       {` · ${format(new Date(m.createdAt), "d MMM, h:mm a")}`}
                     </Text>
                   </View>

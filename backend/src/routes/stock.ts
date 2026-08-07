@@ -40,6 +40,48 @@ stockRouter.post("/assign", requireAuth, requireRole("super_admin", "inventory_m
   res.status(201).json({ ok: true });
 }));
 
+// Distributor -> Distributor transfer (does NOT route through warehouse).
+const Transfer = z.object({
+  bookId: z.coerce.number().int(),
+  fromDistributorId: z.coerce.number().int(),
+  toDistributorId: z.coerce.number().int(),
+  quantity: z.coerce.number().int().positive(),
+  reason: z.string().max(300).nullable().optional(),
+});
+
+stockRouter.post("/transfer", requireAuth, requireRole("super_admin", "inventory_manager"), validateBody(Transfer), asyncHandler(async (req: AuthedRequest, res) => {
+  const { bookId, fromDistributorId, toDistributorId, quantity, reason } = req.body;
+  if (fromDistributorId === toDistributorId) throw new HttpError(400, "BAD_REQUEST", "Source and destination must differ");
+
+  const [book] = await db.select().from(schema.books).where(eq(schema.books.id, bookId));
+  if (!book) throw new HttpError(404, "NOT_FOUND", "Book not found");
+
+  const [fromDist] = await db.select().from(schema.users).where(and(eq(schema.users.id, fromDistributorId), eq(schema.users.role, "distributor")));
+  if (!fromDist) throw new HttpError(404, "NOT_FOUND", "Source distributor not found");
+  const [toDist] = await db.select().from(schema.users).where(and(eq(schema.users.id, toDistributorId), eq(schema.users.role, "distributor")));
+  if (!toDist) throw new HttpError(404, "NOT_FOUND", "Destination distributor not found");
+
+  const [fromDs] = await db.select().from(schema.distributorStock).where(and(eq(schema.distributorStock.distributorId, fromDistributorId), eq(schema.distributorStock.bookId, bookId)));
+  if (!fromDs || fromDs.quantity < quantity) throw new HttpError(400, "INSUFFICIENT_STOCK", `${fromDist.name} only holds ${fromDs?.quantity ?? 0}`);
+
+  // Decrease source.
+  await db.update(schema.distributorStock).set({ quantity: fromDs.quantity - quantity }).where(eq(schema.distributorStock.id, fromDs.id));
+
+  // Increase destination.
+  const [toDs] = await db.select().from(schema.distributorStock).where(and(eq(schema.distributorStock.distributorId, toDistributorId), eq(schema.distributorStock.bookId, bookId)));
+  if (toDs) {
+    await db.update(schema.distributorStock).set({ quantity: toDs.quantity + quantity }).where(eq(schema.distributorStock.id, toDs.id));
+  } else {
+    await db.insert(schema.distributorStock).values({ distributorId: toDistributorId, bookId, quantity });
+  }
+
+  await db.insert(schema.stockMovements).values({
+    bookId, distributorId: fromDistributorId, toDistributorId, quantity, type: "transfer", reason: reason ?? null, movedById: req.user!.id,
+  });
+  await logAudit(req.user!.id, "transfer", "stock", `${quantity}x ${book.title}: ${fromDist.name} → ${toDist.name}${reason ? ` (${reason})` : ""}`);
+  res.status(201).json({ ok: true });
+}));
+
 // Bulk stock intake (new print run received into warehouse)
 const Intake = z.object({
   bookId: z.coerce.number().int(),
@@ -145,6 +187,7 @@ stockRouter.get("/holdings", requireAuth, asyncHandler(async (req: AuthedRequest
 
 // Movement history
 stockRouter.get("/movements", requireAuth, requireRole("super_admin", "inventory_manager"), asyncHandler(async (_req, res) => {
+  const toUsers = schema.users;
   const rows = await db.select({
     id: schema.stockMovements.id,
     quantity: schema.stockMovements.quantity,
@@ -153,10 +196,23 @@ stockRouter.get("/movements", requireAuth, requireRole("super_admin", "inventory
     createdAt: schema.stockMovements.createdAt,
     bookTitle: schema.books.title,
     distributorName: schema.users.name,
+    toDistributorId: schema.stockMovements.toDistributorId,
   }).from(schema.stockMovements)
     .innerJoin(schema.books, eq(schema.stockMovements.bookId, schema.books.id))
     .leftJoin(schema.users, eq(schema.stockMovements.distributorId, schema.users.id))
     .orderBy(desc(schema.stockMovements.createdAt))
     .limit(100);
-  res.json(rows);
+
+  // Resolve destination distributor names for transfers.
+  const toIds = Array.from(new Set(rows.map((r) => r.toDistributorId).filter((x): x is number => !!x)));
+  let toNames: Record<number, string> = {};
+  if (toIds.length > 0) {
+    const toRows = await db.select({ id: toUsers.id, name: toUsers.name }).from(toUsers);
+    toNames = Object.fromEntries(toRows.map((u) => [u.id, u.name]));
+  }
+  const enriched = rows.map((r) => ({
+    ...r,
+    toDistributorName: r.toDistributorId ? (toNames[r.toDistributorId] ?? null) : null,
+  }));
+  res.json(enriched);
 }));

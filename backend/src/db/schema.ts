@@ -40,8 +40,10 @@ export const stockMovements = pgTable("stock_movements", {
   id: serial("id").primaryKey(),
   bookId: integer("book_id").references(() => books.id).notNull(),
   distributorId: integer("distributor_id").references(() => users.id),
+  // For "transfer": distributorId is the SOURCE distributor, toDistributorId is the DESTINATION.
+  toDistributorId: integer("to_distributor_id").references(() => users.id),
   quantity: integer("quantity").notNull(),
-  type: text("type").$type<"assign" | "return" | "adjust" | "stock_in">().notNull().default("assign"),
+  type: text("type").$type<"assign" | "return" | "adjust" | "stock_in" | "transfer">().notNull().default("assign"),
   reason: text("reason"),
   movedById: integer("moved_by_id").references(() => users.id).notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -64,12 +66,7 @@ export const sales = pgTable("sales", {
   quantity: integer("quantity").notNull(),
   unitPrice: numeric("unit_price", { precision: 12, scale: 2 }).notNull(),
   totalValue: numeric("total_value", { precision: 12, scale: 2 }).notNull(),
-  // "free" added as a fourth option alongside cash/online/debt. Free carries $0
-  // value and never touches the outstanding balance (it is excluded from the
-  // debt aggregation in sales.ts, same as cash/online).
   paymentType: text("payment_type").$type<"cash" | "online" | "debt" | "free">().notNull(),
-  // Discounted paid sale: unit price charged below retail. Trackable distinctly
-  // in reporting; NOT the same as "free".
   isDiscounted: boolean("is_discounted").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
@@ -82,11 +79,6 @@ export const remittances = pgTable("remittances", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
-// OPTIONAL allocation layer: an admin may allocate a remittance against specific
-// debt sales. This sits ALONGSIDE the flat running balance — the outstanding
-// balance is still debtTotal - remittedTotal. Allocations are informational /
-// reconciliation records that let admins track which debt sales a payment
-// covered. They do NOT change the flat-balance math.
 export const paymentAllocations = pgTable("payment_allocations", {
   id: serial("id").primaryKey(),
   remittanceId: integer("remittance_id").references(() => remittances.id).notNull(),

@@ -13,6 +13,8 @@ import { remittancesRouter } from "./routes/remittances";
 import { auditRouter } from "./routes/audit";
 import { reportsRouter } from "./routes/reports";
 import { statementsRouter } from "./routes/statements";
+import { searchRouter } from "./routes/search";
+import { notificationsRouter } from "./routes/notifications";
 import { seedIfEmpty } from "./lib/seed";
 
 const app = express();
@@ -33,6 +35,8 @@ app.use("/api/remittances", remittancesRouter);
 app.use("/api/audit", auditRouter);
 app.use("/api/reports", reportsRouter);
 app.use("/api/statements", statementsRouter);
+app.use("/api/search", searchRouter);
+app.use("/api/notifications", notificationsRouter);
 
 app.use((req, res) => {
   console.warn(`[joylo-backend] unmatched route: ${req.method} ${req.originalUrl}`);

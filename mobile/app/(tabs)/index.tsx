@@ -4,7 +4,7 @@ import { View, Text, ScrollView, Pressable, RefreshControl } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
-import { Plus, HandCoins, Boxes, Users, ChevronRight, TrendingUp, ShieldCheck, BarChart3, AlertTriangle, Undo2, ClipboardCheck } from "lucide-react-native";
+import { Plus, HandCoins, Boxes, Users, ChevronRight, TrendingUp, ShieldCheck, BarChart3, AlertTriangle, Undo2, ClipboardCheck, Search as SearchIcon, Bell, ArrowRightLeft } from "lucide-react-native";
 import { useAuth, authFetch, roleLabel } from "@/lib/auth";
 import { StatCard, Skeleton, EmptyState } from "@/components/ui";
 
@@ -17,6 +17,7 @@ export default function Home() {
   const [holdings, setHoldings] = useState<any[]>([]);
   const [distributors, setDistributors] = useState<any[]>([]);
   const [lowStock, setLowStock] = useState<any[]>([]);
+  const [notifs, setNotifs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -30,6 +31,7 @@ export default function Home() {
   const load = useCallback(async () => {
     if (!user) return;
     try {
+      const notifP = authFetch("/api/notifications").then((r) => setNotifs(r.notifications || [])).catch(() => {});
       if (isDistributor) {
         const [b, h] = await Promise.all([authFetch("/api/sales/balance"), authFetch("/api/stock/holdings")]);
         setBalance(b); setHoldings(h);
@@ -37,6 +39,7 @@ export default function Home() {
         const [d, ls] = await Promise.all([authFetch("/api/users/distributors"), authFetch("/api/stock/low-stock")]);
         setDistributors(d); setLowStock(ls);
       }
+      await notifP;
     } catch {}
     setLoading(false);
   }, [user, isDistributor]);
@@ -47,19 +50,49 @@ export default function Home() {
 
   if (!user) return null;
   const totalStock = holdings.reduce((a, h) => a + h.quantity, 0);
+  const notifCount = notifs.length;
 
   return (
     <SafeAreaView edges={["top"]} className="flex-1 bg-stone-50">
       <StatusBar style="dark" />
       <ScrollView className="flex-1" contentContainerClassName="pb-3xl" showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#d97706" />}>
-        <View className="px-lg pt-md pb-lg">
-          <Text className="text-stone-500 text-sm">{roleLabel[user.role]}</Text>
-          <Text className="text-stone-900 text-2xl font-extrabold">Hare Krishna, {user.name.split(" ")[0]}</Text>
+        <View className="flex-row items-center justify-between px-lg pt-md pb-lg">
+          <View className="flex-1 pr-sm">
+            <Text className="text-stone-500 text-sm">{roleLabel[user.role]}</Text>
+            <Text className="text-stone-900 text-2xl font-extrabold" numberOfLines={1}>Hare Krishna, {user.name.split(" ")[0]}</Text>
+          </View>
+          <View className="flex-row gap-sm">
+            <Pressable onPress={() => router.push("/search")} accessibilityLabel="Search"
+              className="w-10 h-10 rounded-full bg-white border border-stone-200 items-center justify-center active:opacity-70">
+              <SearchIcon size={20} color="#292524" />
+            </Pressable>
+            <Pressable onPress={() => router.push("/notifications")} accessibilityLabel="Notifications"
+              className="w-10 h-10 rounded-full bg-white border border-stone-200 items-center justify-center active:opacity-70">
+              <Bell size={20} color="#292524" />
+              {notifCount > 0 && (
+                <View className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-[3px] rounded-full bg-rose-600 items-center justify-center">
+                  <Text className="text-white text-[10px] font-bold">{notifCount > 9 ? "9+" : notifCount}</Text>
+                </View>
+              )}
+            </Pressable>
+          </View>
         </View>
 
         {isDistributor ? (
           <>
+            {/* Distributor notification banner */}
+            {!loading && notifs.length > 0 && (
+              <Pressable onPress={() => router.push("/notifications")}
+                className={`mx-lg mb-md rounded-xl border p-md active:opacity-80 ${notifs[0].severity === "danger" ? "bg-rose-50 border-rose-200" : "bg-amber-50 border-amber-200"}`}>
+                <View className="flex-row items-center gap-xs mb-xs">
+                  <AlertTriangle size={18} color={notifs[0].severity === "danger" ? "#e11d48" : "#d97706"} />
+                  <Text className={`font-bold ${notifs[0].severity === "danger" ? "text-rose-700" : "text-amber-700"}`}>{notifs[0].title}</Text>
+                </View>
+                <Text className="text-stone-700 text-sm">{notifs[0].body}</Text>
+              </Pressable>
+            )}
+
             <View className="mx-lg rounded-2xl bg-amber-600 p-xl">
               <Text className="text-amber-100 text-xs tracking-wider">OUTSTANDING BALANCE</Text>
               <Text className="text-white text-4xl font-extrabold mt-xs">
@@ -126,26 +159,25 @@ export default function Home() {
           <>
             {/* Low-stock alert banner (admin/manager only) */}
             {!loading && lowStock.length > 0 && (
-              <View className="mx-lg mb-md rounded-xl bg-rose-50 border border-rose-200 p-md">
+              <Pressable onPress={() => router.push("/notifications")} className="mx-lg mb-md rounded-xl bg-rose-50 border border-rose-200 p-md active:opacity-80">
                 <View className="flex-row items-center gap-xs mb-xs">
                   <AlertTriangle size={18} color="#e11d48" />
                   <Text className="text-rose-700 font-bold">{lowStock.length} title{lowStock.length === 1 ? "" : "s"} low on stock</Text>
                 </View>
                 <View className="gap-xs mt-xs">
                   {lowStock.slice(0, 4).map((b) => (
-                    <Pressable key={b.id} onPress={() => router.push({ pathname: "/book/[id]", params: { id: String(b.id) } })}
-                      className="flex-row items-center justify-between active:opacity-70">
+                    <View key={b.id} className="flex-row items-center justify-between">
                       <Text className="text-stone-800 text-sm flex-1" numberOfLines={1}>{b.title}</Text>
                       <Text className="text-rose-700 text-sm font-semibold ml-sm">
                         {b.warehouseStock} left · reorder ≤{b.reorderThreshold}
                       </Text>
-                    </Pressable>
+                    </View>
                   ))}
                   {lowStock.length > 4 && (
                     <Text className="text-rose-600 text-xs mt-xs">+{lowStock.length - 4} more below threshold</Text>
                   )}
                 </View>
-              </View>
+              </Pressable>
             )}
 
             <View className="px-lg">
@@ -162,11 +194,18 @@ export default function Home() {
                 </Pressable>
               </View>
               <View className="flex-row gap-sm mt-sm">
+                <Pressable onPress={() => router.push("/stock/transfer")} accessibilityLabel="Transfer stock between distributors"
+                  className="flex-1 flex-row items-center justify-center gap-xs rounded-xl bg-stone-200 py-md active:opacity-70">
+                  <ArrowRightLeft size={16} color="#292524" />
+                  <Text className="text-stone-900 font-semibold">Transfer</Text>
+                </Pressable>
                 <Pressable onPress={() => router.push("/stock/return")} accessibilityLabel="Return stock"
                   className="flex-1 flex-row items-center justify-center gap-xs rounded-xl bg-stone-200 py-md active:opacity-70">
                   <Undo2 size={16} color="#292524" />
-                  <Text className="text-stone-900 font-semibold">Return Stock</Text>
+                  <Text className="text-stone-900 font-semibold">Return</Text>
                 </Pressable>
+              </View>
+              <View className="flex-row gap-sm mt-sm">
                 <Pressable onPress={() => router.push("/stock/reconcile")} accessibilityLabel="Reconcile stock"
                   className="flex-1 flex-row items-center justify-center gap-xs rounded-xl bg-stone-200 py-md active:opacity-70">
                   <ClipboardCheck size={16} color="#292524" />
