@@ -14,6 +14,7 @@ import { auditRouter } from "./routes/audit";
 import { reportsRouter } from "./routes/reports";
 import { statementsRouter } from "./routes/statements";
 import { conflictsRouter } from "./routes/conflicts";
+import { migrationAuditRouter } from "./routes/migration-audit";
 import { seedIfEmpty } from "./lib/seed";
 
 const app = express();
@@ -35,6 +36,7 @@ app.use("/api/audit", auditRouter);
 app.use("/api/reports", reportsRouter);
 app.use("/api/statements", statementsRouter);
 app.use("/api/conflicts", conflictsRouter);
+app.use("/api/migration-audit", migrationAuditRouter);
 
 app.use((req, res) => {
   console.warn(`[joylo-backend] unmatched route: ${req.method} ${req.originalUrl}`);
