@@ -26,7 +26,7 @@ export default function ReconcileStock() {
   useEffect(() => {
     Promise.all([authFetch("/api/books"), authFetch("/api/users/distributors")]).then(([b, d]) => {
       setBooks(b.filter((x: any) => x.active)); setDists(d.filter((x: any) => x.active)); setLoading(false);
-    }).catch(() => setLoading(false));
+    }).catch((e: any) => { setError(e.message || "Could not load data"); setLoading(false); });
   }, []);
 
   const loadDistHolding = async (d: any, b: any) => {
@@ -78,6 +78,10 @@ export default function ReconcileStock() {
                 <Chip label="Per distributor" active={scope === "distributor"} onPress={() => setScope("distributor")} />
               </ScrollView>
             </View>
+
+            {scope === "distributor" ? (
+              <Text className="text-stone-500 text-xs mb-md -mt-sm">Adjusts this distributor's held quantity for the book — not warehouse stock.</Text>
+            ) : null}
 
             <Text className="text-stone-600 text-sm font-medium mb-sm">Book</Text>
             <View className="gap-sm">

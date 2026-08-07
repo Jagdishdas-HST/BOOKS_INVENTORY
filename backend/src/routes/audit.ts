@@ -1,8 +1,8 @@
 
 import { Router } from "express";
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lte } from "drizzle-orm";
 import { db, schema } from "../db/client";
-import { asyncHandler } from "../lib/httpError";
+import { HttpError, asyncHandler } from "../lib/httpError";
 import { requireAuth, requireRole } from "../lib/auth";
 
 export const auditRouter = Router();
@@ -49,3 +49,16 @@ auditRouter.get("/facets", requireAuth, requireRole("super_admin"), asyncHandler
     entities: entities.map((e) => e.entity).sort(),
   });
 }));
+
+// Append-only enforcement. The audit trail must never be mutable via the API.
+// Any PATCH/PUT/DELETE against an audit entry is rejected outright at the
+// server level (not just hidden in the UI). These handlers exist specifically
+// so a direct API call gets a clear 403 rather than falling through to a 404
+// that could be mistaken for "not implemented yet".
+const rejectMutation = asyncHandler(async () => {
+  throw new HttpError(403, "APPEND_ONLY", "The audit log is append-only and cannot be edited or deleted");
+});
+auditRouter.patch("/:id", requireAuth, requireRole("super_admin"), rejectMutation);
+auditRouter.put("/:id", requireAuth, requireRole("super_admin"), rejectMutation);
+auditRouter.delete("/:id", requireAuth, requireRole("super_admin"), rejectMutation);
+auditRouter.delete("/", requireAuth, requireRole("super_admin"), rejectMutation);

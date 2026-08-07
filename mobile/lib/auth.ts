@@ -51,6 +51,23 @@ export const useAuth = create<AuthState>((set) => ({
   },
 }));
 
+/**
+ * Read the stored JWT. Used by non-hook code (upload lib, offline queue).
+ */
+export async function getToken(): Promise<string | null> {
+  return AsyncStorage.getItem("authToken");
+}
+
+/**
+ * Clear the local session (used when the server rejects the token as
+ * expired/invalid). Screens observe `useAuth().user` and redirect to /login.
+ */
+async function clearSession() {
+  await AsyncStorage.removeItem("authToken");
+  await AsyncStorage.removeItem("authUser");
+  useAuth.setState({ token: null, user: null });
+}
+
 export async function authFetch(path: string, options: RequestInit = {}) {
   const token = await AsyncStorage.getItem("authToken");
   const res = await fetch(`${API_URL}${path}`, {
@@ -62,6 +79,12 @@ export async function authFetch(path: string, options: RequestInit = {}) {
     },
   });
   if (!res.ok) {
+    // Expired / invalid / missing token: clear the session so the app falls
+    // back to the login screen gracefully instead of showing broken state.
+    if (res.status === 401) {
+      await clearSession();
+      throw new Error("Your session has expired. Please sign in again.");
+    }
     const err = await res.json().catch(() => ({}));
     throw new Error(err?.error?.message || `Request failed (${res.status})`);
   }

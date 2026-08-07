@@ -1,7 +1,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { db, schema } from "../db/client";
 import { validateBody } from "../middleware/validate";
 import { HttpError, asyncHandler } from "../lib/httpError";
@@ -21,12 +21,24 @@ stockRouter.post("/assign", requireAuth, requireRole("super_admin", "inventory_m
   const { bookId, distributorId, quantity } = req.body;
   const [book] = await db.select().from(schema.books).where(eq(schema.books.id, bookId));
   if (!book) throw new HttpError(404, "NOT_FOUND", "Book not found");
-  if (book.warehouseStock < quantity) throw new HttpError(400, "INSUFFICIENT_STOCK", `Only ${book.warehouseStock} in warehouse`);
 
   const [dist] = await db.select().from(schema.users).where(and(eq(schema.users.id, distributorId), eq(schema.users.role, "distributor")));
   if (!dist) throw new HttpError(404, "NOT_FOUND", "Distributor not found");
+  if (!dist.active) throw new HttpError(400, "INACTIVE", "Distributor is deactivated");
 
-  await db.update(schema.books).set({ warehouseStock: book.warehouseStock - quantity }).where(eq(schema.books.id, bookId));
+  // Guarded conditional UPDATE: only decrements when enough stock is present.
+  // This closes the concurrent-assignment race — two Managers assigning the
+  // same book at once can never drive warehouse stock below zero, because the
+  // decrement is atomic against the current value in the row.
+  const decremented = await db.update(schema.books)
+    .set({ warehouseStock: sql`${schema.books.warehouseStock} - ${quantity}` })
+    .where(and(eq(schema.books.id, bookId), sql`${schema.books.warehouseStock} >= ${quantity}`))
+    .returning({ id: schema.books.id });
+  if (decremented.length === 0) {
+    // Re-read for an accurate message.
+    const [fresh] = await db.select().from(schema.books).where(eq(schema.books.id, bookId));
+    throw new HttpError(400, "INSUFFICIENT_STOCK", `Only ${fresh?.warehouseStock ?? 0} in warehouse`);
+  }
 
   const [ds] = await db.select().from(schema.distributorStock).where(and(eq(schema.distributorStock.distributorId, distributorId), eq(schema.distributorStock.bookId, bookId)));
   if (ds) {
@@ -64,8 +76,15 @@ stockRouter.post("/transfer", requireAuth, requireRole("super_admin", "inventory
   const [fromDs] = await db.select().from(schema.distributorStock).where(and(eq(schema.distributorStock.distributorId, fromDistributorId), eq(schema.distributorStock.bookId, bookId)));
   if (!fromDs || fromDs.quantity < quantity) throw new HttpError(400, "INSUFFICIENT_STOCK", `${fromDist.name} only holds ${fromDs?.quantity ?? 0}`);
 
-  // Decrease source.
-  await db.update(schema.distributorStock).set({ quantity: fromDs.quantity - quantity }).where(eq(schema.distributorStock.id, fromDs.id));
+  // Guarded decrement on the source holding (atomic against concurrent moves).
+  const decremented = await db.update(schema.distributorStock)
+    .set({ quantity: sql`${schema.distributorStock.quantity} - ${quantity}` })
+    .where(and(eq(schema.distributorStock.id, fromDs.id), sql`${schema.distributorStock.quantity} >= ${quantity}`))
+    .returning({ id: schema.distributorStock.id });
+  if (decremented.length === 0) {
+    const [fresh] = await db.select().from(schema.distributorStock).where(eq(schema.distributorStock.id, fromDs.id));
+    throw new HttpError(400, "INSUFFICIENT_STOCK", `${fromDist.name} only holds ${fresh?.quantity ?? 0}`);
+  }
 
   // Increase destination.
   const [toDs] = await db.select().from(schema.distributorStock).where(and(eq(schema.distributorStock.distributorId, toDistributorId), eq(schema.distributorStock.bookId, bookId)));
@@ -94,7 +113,7 @@ stockRouter.post("/intake", requireAuth, requireRole("super_admin", "inventory_m
   const [book] = await db.select().from(schema.books).where(eq(schema.books.id, bookId));
   if (!book) throw new HttpError(404, "NOT_FOUND", "Book not found");
 
-  await db.update(schema.books).set({ warehouseStock: book.warehouseStock + quantity }).where(eq(schema.books.id, bookId));
+  await db.update(schema.books).set({ warehouseStock: sql`${schema.books.warehouseStock} + ${quantity}` }).where(eq(schema.books.id, bookId));
 
   await db.insert(schema.stockMovements).values({
     bookId, distributorId: null, quantity, type: "stock_in", reason: reference ?? null, movedById: req.user!.id,
@@ -121,12 +140,21 @@ stockRouter.post("/return", requireAuth, requireRole("super_admin", "inventory_m
   const [ds] = await db.select().from(schema.distributorStock).where(and(eq(schema.distributorStock.distributorId, distributorId), eq(schema.distributorStock.bookId, bookId)));
   if (!ds || ds.quantity < quantity) throw new HttpError(400, "INSUFFICIENT_STOCK", `Distributor only holds ${ds?.quantity ?? 0}`);
 
-  await db.update(schema.distributorStock).set({ quantity: ds.quantity - quantity }).where(eq(schema.distributorStock.id, ds.id));
+  // Guarded decrement so a return can never take held stock below the amount
+  // actually held (protects against concurrent returns of the same holding).
+  const decremented = await db.update(schema.distributorStock)
+    .set({ quantity: sql`${schema.distributorStock.quantity} - ${quantity}` })
+    .where(and(eq(schema.distributorStock.id, ds.id), sql`${schema.distributorStock.quantity} >= ${quantity}`))
+    .returning({ id: schema.distributorStock.id });
+  if (decremented.length === 0) {
+    const [fresh] = await db.select().from(schema.distributorStock).where(eq(schema.distributorStock.id, ds.id));
+    throw new HttpError(400, "INSUFFICIENT_STOCK", `Distributor only holds ${fresh?.quantity ?? 0}`);
+  }
 
   if (reason === "damaged") {
-    await db.update(schema.books).set({ writeOffStock: book.writeOffStock + quantity }).where(eq(schema.books.id, bookId));
+    await db.update(schema.books).set({ writeOffStock: sql`${schema.books.writeOffStock} + ${quantity}` }).where(eq(schema.books.id, bookId));
   } else {
-    await db.update(schema.books).set({ warehouseStock: book.warehouseStock + quantity }).where(eq(schema.books.id, bookId));
+    await db.update(schema.books).set({ warehouseStock: sql`${schema.books.warehouseStock} + ${quantity}` }).where(eq(schema.books.id, bookId));
   }
 
   await db.insert(schema.stockMovements).values({ bookId, distributorId, quantity, type: "return", reason, movedById: req.user!.id });
@@ -134,23 +162,51 @@ stockRouter.post("/return", requireAuth, requireRole("super_admin", "inventory_m
   res.status(201).json({ ok: true });
 }));
 
-// Reconciliation adjustment
+// Reconciliation adjustment.
+//   - Warehouse scope (distributorId null/absent): sets warehouse stock to the
+//     physical count.
+//   - Distributor scope (distributorId present): sets THAT distributor's held
+//     quantity for the book to the physical count. Previously this was ignored
+//     and a per-distributor count silently overwrote WAREHOUSE stock — a real
+//     data-integrity bug. Now it adjusts the correct holding.
 const Reconcile = z.object({
   bookId: z.coerce.number().int(),
+  distributorId: z.coerce.number().int().nullable().optional(),
   physicalCount: z.coerce.number().int().nonnegative(),
   note: z.string().max(300).nullable().optional(),
 });
 
 stockRouter.post("/reconcile", requireAuth, requireRole("super_admin", "inventory_manager"), validateBody(Reconcile), asyncHandler(async (req: AuthedRequest, res) => {
-  const { bookId, physicalCount, note } = req.body;
+  const { bookId, distributorId, physicalCount, note } = req.body;
   const [book] = await db.select().from(schema.books).where(eq(schema.books.id, bookId));
   if (!book) throw new HttpError(404, "NOT_FOUND", "Book not found");
+
+  if (distributorId) {
+    const [dist] = await db.select().from(schema.users).where(and(eq(schema.users.id, distributorId), eq(schema.users.role, "distributor")));
+    if (!dist) throw new HttpError(404, "NOT_FOUND", "Distributor not found");
+
+    const [ds] = await db.select().from(schema.distributorStock).where(and(eq(schema.distributorStock.distributorId, distributorId), eq(schema.distributorStock.bookId, bookId)));
+    const oldCount = ds?.quantity ?? 0;
+    const diff = physicalCount - oldCount;
+
+    if (ds) {
+      await db.update(schema.distributorStock).set({ quantity: physicalCount }).where(eq(schema.distributorStock.id, ds.id));
+    } else {
+      await db.insert(schema.distributorStock).values({ distributorId, bookId, quantity: physicalCount });
+    }
+
+    await db.insert(schema.stockMovements).values({ bookId, distributorId, quantity: diff, type: "adjust", reason: note ?? null, movedById: req.user!.id });
+    await logAudit(req.user!.id, "adjust", "stock", `${book.title} @ ${dist.name}: ${oldCount} → ${physicalCount}${note ? ` (${note})` : ""}`);
+    res.status(201).json({ ok: true });
+    return;
+  }
+
   const oldCount = book.warehouseStock;
   const diff = physicalCount - oldCount;
 
   await db.update(schema.books).set({ warehouseStock: physicalCount }).where(eq(schema.books.id, bookId));
   await db.insert(schema.stockMovements).values({ bookId, distributorId: null, quantity: diff, type: "adjust", reason: note ?? null, movedById: req.user!.id });
-  await logAudit(req.user!.id, "adjust", "stock", `${book.title}: ${oldCount} → ${physicalCount}${note ? ` (${note})` : ""}`);
+  await logAudit(req.user!.id, "adjust", "stock", `${book.title} (warehouse): ${oldCount} → ${physicalCount}${note ? ` (${note})` : ""}`);
   res.status(201).json({ ok: true });
 }));
 
