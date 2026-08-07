@@ -4,11 +4,12 @@ import { View, Text, ScrollView, Pressable, RefreshControl } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
-import { ChevronLeft, TrendingUp, Trophy, PieChart, BookOpen, LineChart, Percent } from "lucide-react-native";
+import { ChevronLeft, TrendingUp, Trophy, PieChart, BookOpen, LineChart, Percent, WifiOff } from "lucide-react-native";
 import { format } from "date-fns";
 import { useAuth, authFetch } from "@/lib/auth";
 import { Skeleton, EmptyState, Chip, StatCard } from "@/components/ui";
 import { ExportButton } from "@/components/ExportButton";
+import { useIsOnline, startConnectivityPolling } from "@/lib/connectivity";
 
 const RANGE_LABELS: Record<string, string> = {
   all: "All time",
@@ -29,6 +30,7 @@ export default function Reports() {
   const router = useRouter();
   const user = useAuth((s) => s.user);
   const hydrated = useAuth((s) => s.hydrated);
+  const online = useIsOnline();
 
   const [range, setRange] = useState("all");
   const [bucket, setBucket] = useState<"day" | "week" | "month">("day");
@@ -44,17 +46,23 @@ export default function Reports() {
   const [margin, setMargin] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
 
   const isAllowed = user?.role === "super_admin" || user?.role === "inventory_manager";
+
+  useEffect(() => {
+    startConnectivityPolling();
+  }, []);
 
   useEffect(() => {
     if (hydrated && !isAllowed) router.replace("/(tabs)");
   }, [hydrated, isAllowed]);
 
   useEffect(() => {
+    if (!online) return;
     authFetch("/api/reports/categories").then(setCategories).catch(() => {});
     authFetch("/api/users/distributors").then(setDistributors).catch(() => {});
-  }, []);
+  }, [online]);
 
   const filterQs = useCallback(() => {
     const p = new URLSearchParams();
@@ -65,6 +73,11 @@ export default function Reports() {
   }, [range, categoryFilter, distributorFilter]);
 
   const load = useCallback(async () => {
+    if (!online) {
+      setLoading(false);
+      return;
+    }
+    setError("");
     try {
       const base = filterQs().toString();
       const trendQs = new URLSearchParams(filterQs());
@@ -75,9 +88,11 @@ export default function Reports() {
         authFetch(`/api/reports/margin?${base}`),
       ]);
       setData(d); setTrends(t); setMargin(m);
-    } catch {}
+    } catch (e: any) {
+      setError(e?.message || "Failed to load reports");
+    }
     setLoading(false);
-  }, [filterQs, bucket]);
+  }, [filterQs, bucket, online]);
 
   useEffect(() => { setLoading(true); load(); }, [load]);
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
@@ -101,7 +116,6 @@ export default function Reports() {
     } catch { return iso; }
   };
 
-  // Export path carries the current filters.
   const exportBase = `?${filterQs().toString()}`;
 
   return (
@@ -112,43 +126,79 @@ export default function Reports() {
           <Pressable onPress={() => router.back()} accessibilityLabel="Back"><ChevronLeft size={26} color="#292524" /></Pressable>
           <Text className="text-stone-900 text-xl font-extrabold">Reports</Text>
         </View>
-        <ExportButton path={`/api/reports/export/sales.csv${exportBase}`} label="Sales CSV" />
+        {online && <ExportButton path={`/api/reports/export/sales.csv${exportBase}`} label="Sales CSV" />}
       </View>
 
-      {/* Range filter */}
-      <View className="pt-xs">
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName="px-lg gap-sm">
-          {Object.keys(RANGE_LABELS).map((r) => (
-            <Chip key={r} label={RANGE_LABELS[r]} active={range === r} onPress={() => setRange(r)} />
-          ))}
-        </ScrollView>
-      </View>
+      {/* Offline gate */}
+      {!online && (
+        <View className="mx-lg mb-md rounded-xl bg-amber-50 border border-amber-300 p-md">
+          <View className="flex-row items-center gap-sm">
+            <WifiOff size={16} color="#d97706" />
+            <Text className="text-amber-800 font-semibold text-sm flex-1">Reports require a connection</Text>
+          </View>
+          <Text className="text-amber-700 text-xs mt-xs">
+            Reconnect to the internet to view live sales reports and analytics.
+          </Text>
+        </View>
+      )}
 
-      {/* Category filter */}
-      <View className="pt-sm">
-        <Text className="px-lg text-stone-500 text-xs uppercase tracking-wide mb-xs">Category</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName="px-lg gap-sm">
-          <Chip label="All" active={categoryFilter === "all"} onPress={() => setCategoryFilter("all")} />
-          {categories.map((c) => (
-            <Chip key={c} label={c} active={categoryFilter === c} onPress={() => setCategoryFilter(c)} />
-          ))}
-        </ScrollView>
-      </View>
+      {online && (
+        <>
+          {/* Range filter */}
+          <View className="pt-xs">
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName="px-lg gap-sm">
+              {Object.keys(RANGE_LABELS).map((r) => (
+                <Chip key={r} label={RANGE_LABELS[r]} active={range === r} onPress={() => setRange(r)} />
+              ))}
+            </ScrollView>
+          </View>
 
-      {/* Distributor filter */}
-      <View className="pt-sm">
-        <Text className="px-lg text-stone-500 text-xs uppercase tracking-wide mb-xs">Distributor</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName="px-lg gap-sm">
-          <Chip label="All" active={distributorFilter === "all"} onPress={() => setDistributorFilter("all")} />
-          {distributors.map((d) => (
-            <Chip key={d.id} label={d.name} active={distributorFilter === d.id} onPress={() => setDistributorFilter(d.id)} />
-          ))}
-        </ScrollView>
-      </View>
+          {/* Category filter */}
+          <View className="pt-sm">
+            <Text className="px-lg text-stone-500 text-xs uppercase tracking-wide mb-xs">Category</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName="px-lg gap-sm">
+              <Chip label="All" active={categoryFilter === "all"} onPress={() => setCategoryFilter("all")} />
+              {categories.map((c) => (
+                <Chip key={c} label={c} active={categoryFilter === c} onPress={() => setCategoryFilter(c)} />
+              ))}
+            </ScrollView>
+          </View>
+
+          {/* Distributor filter */}
+          <View className="pt-sm">
+            <Text className="px-lg text-stone-500 text-xs uppercase tracking-wide mb-xs">Distributor</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName="px-lg gap-sm">
+              <Chip label="All" active={distributorFilter === "all"} onPress={() => setDistributorFilter("all")} />
+              {distributors.map((d) => (
+                <Chip key={d.id} label={d.name} active={distributorFilter === d.id} onPress={() => setDistributorFilter(d.id)} />
+              ))}
+            </ScrollView>
+          </View>
+        </>
+      )}
 
       <ScrollView className="flex-1" contentContainerClassName="px-lg pb-3xl pt-md" showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#d97706" />}>
-        {loading ? <Skeleton count={6} /> : !data ? (
+
+        {!online ? (
+          <View className="rounded-xl bg-white border border-stone-200 mt-lg">
+            <EmptyState
+              icon={<WifiOff size={26} color="#a8a29e" />}
+              title="No connection"
+              description="Connect to the internet to view reports and analytics."
+            />
+          </View>
+        ) : error ? (
+          <View className="rounded-xl bg-rose-50 border border-rose-200 p-md mt-lg">
+            <Text className="text-rose-700 font-semibold text-sm">Failed to load reports</Text>
+            <Text className="text-rose-600 text-xs mt-xs">{error}</Text>
+            <Pressable onPress={onRefresh} className="mt-sm self-start rounded-full bg-rose-600 px-md py-xs active:opacity-80">
+              <Text className="text-white text-xs font-semibold">Retry</Text>
+            </Pressable>
+          </View>
+        ) : loading ? (
+          <Skeleton count={6} />
+        ) : !data ? (
           <View className="rounded-xl bg-white border border-stone-200 mt-lg">
             <EmptyState icon={<TrendingUp size={26} color="#a8a29e" />} title="No report data" description="Sales activity will appear here once distributors start logging sales." />
           </View>
@@ -260,7 +310,6 @@ export default function Reports() {
                   </View>
                 </View>
 
-                {/* By category */}
                 <Text className="text-stone-700 font-bold mt-lg mb-sm">Margin by Category</Text>
                 {margin.byCategory.length === 0 ? (
                   <View className="rounded-xl bg-white border border-stone-200">
@@ -280,7 +329,6 @@ export default function Reports() {
                   </View>
                 )}
 
-                {/* By distributor */}
                 <Text className="text-stone-700 font-bold mt-lg mb-sm">Margin by Distributor</Text>
                 {margin.byDistributor.length === 0 ? (
                   <View className="rounded-xl bg-white border border-stone-200">
@@ -300,7 +348,6 @@ export default function Reports() {
                   </View>
                 )}
 
-                {/* By book */}
                 <Text className="text-stone-700 font-bold mt-lg mb-sm">Margin by Title</Text>
                 {margin.byBook.length === 0 ? (
                   <View className="rounded-xl bg-white border border-stone-200">

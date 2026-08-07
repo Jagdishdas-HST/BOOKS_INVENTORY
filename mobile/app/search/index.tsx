@@ -4,26 +4,38 @@ import { View, Text, ScrollView, TextInput, Pressable, ActivityIndicator } from 
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
-import { ChevronLeft, Search as SearchIcon, BookOpen, Receipt, Users, HandCoins } from "lucide-react-native";
+import { ChevronLeft, Search as SearchIcon, BookOpen, Receipt, Users, HandCoins, WifiOff } from "lucide-react-native";
 import { format } from "date-fns";
 import { authFetch, useAuth } from "@/lib/auth";
 import { EmptyState } from "@/components/ui";
+import { useIsOnline } from "@/lib/connectivity";
 
 export default function Search() {
   const router = useRouter();
   const user = useAuth((s) => s.user);
+  const online = useIsOnline();
   const isAdmin = user?.role === "super_admin" || user?.role === "inventory_manager";
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<any>(null);
+  const [error, setError] = useState("");
   const timer = useRef<any>(null);
 
   const run = useCallback(async (query: string) => {
-    if (!query.trim()) { setData(null); return; }
+    if (!query.trim()) { setData(null); setError(""); return; }
+    if (!online) {
+      setError("Search requires a connection. Reconnect and try again.");
+      return;
+    }
     setLoading(true);
-    try { setData(await authFetch(`/api/search?q=${encodeURIComponent(query.trim())}`)); } catch {}
+    setError("");
+    try {
+      setData(await authFetch(`/api/search?q=${encodeURIComponent(query.trim())}`));
+    } catch (e: any) {
+      setError(e?.message || "Search failed");
+    }
     setLoading(false);
-  }, []);
+  }, [online]);
 
   const onChange = (t: string) => {
     setQ(t);
@@ -43,6 +55,16 @@ export default function Search() {
         <Text className="text-stone-900 text-xl font-extrabold">Search</Text>
       </View>
 
+      {/* Offline banner */}
+      {!online && (
+        <View className="mx-lg mb-sm rounded-xl bg-amber-50 border border-amber-200 p-md flex-row items-center gap-sm">
+          <WifiOff size={16} color="#d97706" />
+          <Text className="text-amber-800 text-sm flex-1">
+            Search requires a connection. Reconnect to search the catalog.
+          </Text>
+        </View>
+      )}
+
       <View className="px-lg pb-sm">
         <View className="flex-row items-center rounded-xl bg-white border border-stone-200 px-md">
           <SearchIcon size={18} color="#a8a29e" />
@@ -53,13 +75,26 @@ export default function Search() {
             placeholder={isAdmin ? "Books, sales, distributors…" : "Books & your sales…"}
             placeholderTextColor="#a8a29e"
             className="flex-1 px-sm py-md text-stone-900"
+            editable={online}
           />
           {loading && <ActivityIndicator size="small" color="#d97706" />}
         </View>
       </View>
 
       <ScrollView className="flex-1" contentContainerClassName="px-lg pb-3xl pt-sm" showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-        {!q.trim() ? (
+        {!online ? (
+          <View className="rounded-xl bg-white border border-stone-200 mt-lg">
+            <EmptyState
+              icon={<WifiOff size={26} color="#a8a29e" />}
+              title="No connection"
+              description="Connect to the internet to search the catalog and sales records."
+            />
+          </View>
+        ) : error ? (
+          <View className="rounded-xl bg-rose-50 border border-rose-200 p-md mt-lg">
+            <Text className="text-rose-700 text-sm">{error}</Text>
+          </View>
+        ) : !q.trim() ? (
           <View className="rounded-xl bg-white border border-stone-200 mt-lg">
             <EmptyState icon={<SearchIcon size={26} color="#a8a29e" />} title="Search the catalog" description={isAdmin ? "Find books, sales and distributors." : "Find books and your own sales."} />
           </View>

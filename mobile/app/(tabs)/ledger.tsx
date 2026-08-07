@@ -6,7 +6,7 @@ import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import {
   Receipt, HandCoins, FileText, Gift,
-  CloudUpload, AlertTriangle, RefreshCw, Clock, CheckCircle2, WifiOff,
+  CloudUpload, AlertTriangle, RefreshCw, Clock, CheckCircle2, WifiOff, Check,
 } from "lucide-react-native";
 import { format } from "date-fns";
 import { authFetch } from "@/lib/auth";
@@ -14,6 +14,7 @@ import { Skeleton, EmptyState, Chip } from "@/components/ui";
 import { useOfflineQueue, type QueueStatus } from "@/lib/offlineQueue";
 import { useIsOnline, startConnectivityPolling } from "@/lib/connectivity";
 
+// Accurate status badge — cycles through all 4 states: queued, syncing, synced (removed from queue), flagged
 function QueueStatusBadge({ status }: { status: QueueStatus }) {
   if (status === "conflict") {
     return (
@@ -31,6 +32,7 @@ function QueueStatusBadge({ status }: { status: QueueStatus }) {
       </View>
     );
   }
+  // "pending" = queued, waiting for connection
   return (
     <View className="flex-row items-center gap-xs">
       <CloudUpload size={13} color="#d97706" />
@@ -70,8 +72,9 @@ export default function Ledger() {
   useEffect(() => {
     load();
     refreshQueue();
-    syncQueue();
-  }, [load]);
+    // Auto-sync when coming online
+    if (online) syncQueue();
+  }, [load, online]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -87,9 +90,26 @@ export default function Ledger() {
     : t === "free" ? "bg-purple-100 text-purple-700"
     : "bg-rose-100 text-rose-700";
 
-  const pending = queue.filter((q) => q.status === "pending" || q.status === "syncing");
+  const pending = queue.filter((q) => q.status === "pending");
+  const syncingItems = queue.filter((q) => q.status === "syncing");
   const conflicts = queue.filter((q) => q.status === "conflict");
-  const totalQueued = pending.length + conflicts.length;
+  const totalQueued = pending.length + syncingItems.length + conflicts.length;
+
+  // Summary label for the header — shows the most urgent state
+  const queueSummaryLabel = () => {
+    if (conflicts.length > 0 && (pending.length + syncingItems.length) === 0) {
+      return `${conflicts.length} sale${conflicts.length === 1 ? "" : "s"} flagged for review`;
+    }
+    if (syncing || syncingItems.length > 0) {
+      return `Syncing ${syncingItems.length + pending.length} sale${(syncingItems.length + pending.length) === 1 ? "" : "s"}…`;
+    }
+    if (pending.length > 0) {
+      return `${pending.length} sale${pending.length === 1 ? "" : "s"} queued — waiting for connection`;
+    }
+    return null;
+  };
+
+  const summaryLabel = queueSummaryLabel();
 
   return (
     <SafeAreaView edges={["top"]} className="flex-1 bg-stone-50">
@@ -97,9 +117,9 @@ export default function Ledger() {
       <View className="flex-row items-center justify-between px-lg pt-md pb-sm">
         <View>
           <Text className="text-stone-900 text-2xl font-extrabold">My Ledger</Text>
-          {totalQueued > 0 && (
-            <Text className="text-amber-700 text-xs font-semibold mt-xs">
-              {totalQueued} sale{totalQueued === 1 ? "" : "s"} waiting to sync
+          {summaryLabel && (
+            <Text className={`text-xs font-semibold mt-xs ${conflicts.length > 0 && pending.length === 0 ? "text-rose-700" : "text-amber-700"}`}>
+              {summaryLabel}
             </Text>
           )}
         </View>
@@ -136,8 +156,18 @@ export default function Ledger() {
           </View>
         )}
 
-        {/* Sync status header */}
-        {tab === "sales" && (pending.length > 0 || conflicts.length > 0) ? (
+        {/* Statement requires connection */}
+        {!online && tab === "remittances" && (
+          <View className="rounded-xl bg-stone-100 border border-stone-200 p-md mb-md flex-row items-center gap-sm">
+            <WifiOff size={14} color="#78716c" />
+            <Text className="text-stone-600 text-sm flex-1">
+              Remittance history requires a connection.
+            </Text>
+          </View>
+        )}
+
+        {/* Sync status header — shows all 4 states */}
+        {tab === "sales" && totalQueued > 0 ? (
           <View className="mb-md gap-sm">
             <View className="flex-row items-center justify-between">
               <Text className="text-stone-500 text-xs uppercase tracking-wide">Offline Queue</Text>
@@ -153,6 +183,7 @@ export default function Ledger() {
               </Pressable>
             </View>
 
+            {/* FLAGGED FOR REVIEW — conflict state */}
             {conflicts.map((q) => (
               <View key={q.clientId} className="rounded-xl bg-rose-50 border border-rose-200 p-md">
                 <View className="flex-row items-center justify-between">
@@ -166,11 +197,28 @@ export default function Ledger() {
                   Logged {format(new Date(q.clientLoggedAt), "d MMM, h:mm a")} · {q.quantity} × ₹{q.unitPrice}
                 </Text>
                 <Text className="text-stone-500 text-xs mt-xs">
-                  An Admin/Manager will decide whether to approve or drop it.
+                  Stock was insufficient at sync time. An Admin/Manager will approve or drop it.
                 </Text>
               </View>
             ))}
 
+            {/* SYNCING — in-progress state */}
+            {syncingItems.map((q) => (
+              <View key={q.clientId} className="rounded-xl bg-sky-50 border border-sky-200 p-md">
+                <View className="flex-row items-center justify-between">
+                  <Text className="text-stone-900 font-semibold flex-1 pr-sm" numberOfLines={1}>{q.bookTitle}</Text>
+                  <Text className="text-stone-900 font-extrabold">
+                    {q.paymentType === "free" ? "₹0" : `₹${q.totalValue.toFixed(2)}`}
+                  </Text>
+                </View>
+                <QueueStatusBadge status="syncing" />
+                <Text className="text-stone-400 text-xs mt-xs">
+                  {q.quantity} × ₹{q.unitPrice} · {q.paymentType.toUpperCase()}
+                </Text>
+              </View>
+            ))}
+
+            {/* QUEUED — pending state */}
             {pending.map((q) => (
               <View key={q.clientId} className="rounded-xl bg-amber-50 border border-amber-200 p-md">
                 <View className="flex-row items-center justify-between">
@@ -193,11 +241,11 @@ export default function Ledger() {
           </View>
         ) : null}
 
-        {/* Synced sales */}
+        {/* SYNCED sales — shown after queue is empty or alongside it */}
         {loading ? (
           <Skeleton count={5} />
         ) : tab === "sales" ? (
-          sales.length === 0 && pending.length === 0 && conflicts.length === 0 ? (
+          sales.length === 0 && totalQueued === 0 ? (
             <View className="rounded-xl bg-white border border-stone-200 mt-lg">
               <EmptyState
                 icon={<Receipt size={26} color="#a8a29e" />}
@@ -217,9 +265,12 @@ export default function Ledger() {
                 <View key={s.id} className="rounded-xl bg-white border border-stone-200 p-md">
                   <View className="flex-row items-center justify-between">
                     <Text className="text-stone-900 font-semibold flex-1 pr-sm" numberOfLines={1}>{s.bookTitle}</Text>
-                    <Text className="text-stone-900 font-extrabold">
-                      {s.paymentType === "free" ? "₹0" : `₹${s.totalValue}`}
-                    </Text>
+                    <View className="flex-row items-center gap-xs">
+                      <Check size={12} color="#059669" />
+                      <Text className="text-stone-900 font-extrabold">
+                        {s.paymentType === "free" ? "₹0" : `₹${s.totalValue}`}
+                      </Text>
+                    </View>
                   </View>
                   <View className="flex-row items-center justify-between mt-xs">
                     <View className="flex-row items-center gap-sm">
@@ -256,7 +307,7 @@ export default function Ledger() {
               <EmptyState
                 icon={<HandCoins size={26} color="#a8a29e" />}
                 title="No remittances"
-                description="Log a payment to reduce your outstanding balance."
+                description={online ? "Log a payment to reduce your outstanding balance." : "Connect to view remittance history."}
               />
             </View>
           ) : (

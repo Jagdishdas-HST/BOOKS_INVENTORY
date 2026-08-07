@@ -6,15 +6,17 @@ import { StatusBar } from "expo-status-bar";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
-import { ChevronLeft, ImagePlus, History } from "lucide-react-native";
+import { ChevronLeft, ImagePlus, History, WifiOff } from "lucide-react-native";
 import { authFetch } from "@/lib/auth";
 import { uploadImage } from "@/lib/upload";
 import { Button, Skeleton } from "@/components/ui";
 import { haptics } from "@/lib/haptics";
+import { useIsOnline } from "@/lib/connectivity";
 
 export default function BookDetail() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
+  const online = useIsOnline();
   const [book, setBook] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState("");
@@ -42,6 +44,7 @@ export default function BookDetail() {
   }, [id]);
 
   const pickCover = async () => {
+    if (!online) { setError("Image upload requires a connection."); return; }
     const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.8 });
     if (res.canceled) return;
     setUploading(true); setError("");
@@ -51,7 +54,9 @@ export default function BookDetail() {
   };
 
   const save = async () => {
-    setError(""); setSaving(true);
+    setError("");
+    if (!online) { setError("Saving requires a connection."); return; }
+    setSaving(true);
     try {
       await authFetch(`/api/books/${id}`, { method: "PATCH", body: JSON.stringify({
         title: title.trim(), costPrice: parseFloat(cost), retailPrice: parseFloat(retail),
@@ -64,6 +69,7 @@ export default function BookDetail() {
   };
 
   const toggleRetire = async () => {
+    if (!online) { setError("This action requires a connection."); return; }
     try { await authFetch(`/api/books/${id}`, { method: "PATCH", body: JSON.stringify({ active: !book.active }) }); haptics.medium(); router.back(); } catch (e: any) { setError(e.message); }
   };
 
@@ -75,6 +81,15 @@ export default function BookDetail() {
         <Text className="text-stone-900 text-xl font-extrabold">Edit Book</Text>
       </View>
 
+      {!online && (
+        <View className="mx-lg mb-sm rounded-xl bg-amber-50 border border-amber-200 p-md flex-row items-center gap-sm">
+          <WifiOff size={16} color="#d97706" />
+          <Text className="text-amber-800 text-sm flex-1">
+            Offline — editing and image upload require a connection.
+          </Text>
+        </View>
+      )}
+
       <ScrollView className="flex-1" contentContainerClassName="px-lg pb-3xl" showsVerticalScrollIndicator={false}>
         {loading ? <Skeleton count={4} /> : !book ? <Text className="text-stone-500">Book not found.</Text> : (
           <>
@@ -85,7 +100,7 @@ export default function BookDetail() {
               ) : (
                 <View className="items-center">
                   <ImagePlus size={28} color="#a8a29e" />
-                  <Text className="text-stone-400 text-sm mt-xs">Tap to add cover</Text>
+                  <Text className="text-stone-400 text-sm mt-xs">{online ? "Tap to add cover" : "Upload requires connection"}</Text>
                 </View>
               )}
             </Pressable>
@@ -97,30 +112,30 @@ export default function BookDetail() {
 
             <View className="mb-md">
               <Text className="text-stone-600 text-sm font-medium mb-xs">Title</Text>
-              <TextInput value={title} onChangeText={setTitle} className="rounded-xl bg-white border border-stone-200 px-md py-md text-stone-900" />
+              <TextInput value={title} onChangeText={setTitle} editable={online} className={`rounded-xl border px-md py-md ${online ? "bg-white border-stone-200 text-stone-900" : "bg-stone-100 border-stone-200 text-stone-500"}`} />
             </View>
             <View className="mb-md">
               <Text className="text-stone-600 text-sm font-medium mb-xs">ISBN / Barcode</Text>
-              <TextInput value={isbn} onChangeText={setIsbn} autoCapitalize="none" placeholder="Optional" placeholderTextColor="#a8a29e" className="rounded-xl bg-white border border-stone-200 px-md py-md text-stone-900" />
+              <TextInput value={isbn} onChangeText={setIsbn} autoCapitalize="none" placeholder="Optional" placeholderTextColor="#a8a29e" editable={online} className={`rounded-xl border px-md py-md ${online ? "bg-white border-stone-200 text-stone-900" : "bg-stone-100 border-stone-200 text-stone-500"}`} />
             </View>
             <View className="flex-row gap-sm">
               <View className="flex-1 mb-md">
                 <Text className="text-stone-600 text-sm font-medium mb-xs">Cost (₹)</Text>
-                <TextInput value={cost} onChangeText={setCost} keyboardType="decimal-pad" className="rounded-xl bg-white border border-stone-200 px-md py-md text-stone-900" />
+                <TextInput value={cost} onChangeText={setCost} keyboardType="decimal-pad" editable={online} className={`rounded-xl border px-md py-md ${online ? "bg-white border-stone-200 text-stone-900" : "bg-stone-100 border-stone-200 text-stone-500"}`} />
               </View>
               <View className="flex-1 mb-md">
                 <Text className="text-stone-600 text-sm font-medium mb-xs">Retail (₹)</Text>
-                <TextInput value={retail} onChangeText={setRetail} keyboardType="decimal-pad" className="rounded-xl bg-white border border-stone-200 px-md py-md text-stone-900" />
+                <TextInput value={retail} onChangeText={setRetail} keyboardType="decimal-pad" editable={online} className={`rounded-xl border px-md py-md ${online ? "bg-white border-stone-200 text-stone-900" : "bg-stone-100 border-stone-200 text-stone-500"}`} />
               </View>
             </View>
             <View className="flex-row gap-sm">
               <View className="flex-1 mb-md">
                 <Text className="text-stone-600 text-sm font-medium mb-xs">Warehouse stock</Text>
-                <TextInput value={stock} onChangeText={setStock} keyboardType="number-pad" className="rounded-xl bg-white border border-stone-200 px-md py-md text-stone-900" />
+                <TextInput value={stock} onChangeText={setStock} keyboardType="number-pad" editable={online} className={`rounded-xl border px-md py-md ${online ? "bg-white border-stone-200 text-stone-900" : "bg-stone-100 border-stone-200 text-stone-500"}`} />
               </View>
               <View className="flex-1 mb-md">
                 <Text className="text-stone-600 text-sm font-medium mb-xs">Reorder threshold</Text>
-                <TextInput value={threshold} onChangeText={setThreshold} keyboardType="number-pad" className="rounded-xl bg-white border border-stone-200 px-md py-md text-stone-900" />
+                <TextInput value={threshold} onChangeText={setThreshold} keyboardType="number-pad" editable={online} className={`rounded-xl border px-md py-md ${online ? "bg-white border-stone-200 text-stone-900" : "bg-stone-100 border-stone-200 text-stone-500"}`} />
               </View>
             </View>
 
@@ -135,10 +150,19 @@ export default function BookDetail() {
             </Pressable>
 
             {error ? <Text className="text-rose-600 text-sm mb-sm">{error}</Text> : null}
-            <Button label="Save Changes" onPress={save} loading={saving} />
-            <View className="mt-sm">
-              <Button label={book.active ? "Retire SKU" : "Reactivate SKU"} variant="secondary" onPress={toggleRetire} />
-            </View>
+            {online ? (
+              <>
+                <Button label="Save Changes" onPress={save} loading={saving} />
+                <View className="mt-sm">
+                  <Button label={book.active ? "Retire SKU" : "Reactivate SKU"} variant="secondary" onPress={toggleRetire} />
+                </View>
+              </>
+            ) : (
+              <View className="rounded-xl bg-stone-100 border border-stone-200 p-md items-center">
+                <WifiOff size={20} color="#a8a29e" />
+                <Text className="text-stone-500 text-sm mt-xs text-center">Connect to save changes</Text>
+              </View>
+            )}
           </>
         )}
       </ScrollView>

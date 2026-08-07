@@ -6,16 +6,18 @@ import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
-import { ChevronLeft, ImagePlus } from "lucide-react-native";
+import { ChevronLeft, ImagePlus, WifiOff } from "lucide-react-native";
 import { authFetch } from "@/lib/auth";
 import { uploadImage } from "@/lib/upload";
 import { Button, Chip } from "@/components/ui";
 import { haptics } from "@/lib/haptics";
+import { useIsOnline } from "@/lib/connectivity";
 
 const CATEGORIES = ["Bhagavad-gita", "Srimad-Bhagavatam", "Nectar of Devotion", "Small Books", "Magazines", "Other"];
 
 export default function NewBook() {
   const router = useRouter();
+  const online = useIsOnline();
   const [sku, setSku] = useState("");
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState("Bhagavad-gita");
@@ -32,6 +34,10 @@ export default function NewBook() {
   const [saving, setSaving] = useState(false);
 
   const pickCover = async () => {
+    if (!online) {
+      setError("Image upload requires a connection.");
+      return;
+    }
     const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.8 });
     if (res.canceled) return;
     setUploading(true); setError("");
@@ -44,6 +50,7 @@ export default function NewBook() {
 
   const submit = async () => {
     setError("");
+    if (!online) { setError("Adding a book requires a connection."); return; }
     if (!sku.trim() || !title.trim() || !cost || !retail) { setError("Fill SKU, title, cost & retail"); return; }
     setSaving(true);
     try {
@@ -75,16 +82,25 @@ export default function NewBook() {
         <Text className="text-stone-900 text-xl font-extrabold">Add Book</Text>
       </View>
 
+      {!online && (
+        <View className="mx-lg mb-sm rounded-xl bg-amber-50 border border-amber-200 p-md flex-row items-center gap-sm">
+          <WifiOff size={16} color="#d97706" />
+          <Text className="text-amber-800 text-sm flex-1">
+            Adding books requires a connection. Reconnect and try again.
+          </Text>
+        </View>
+      )}
+
       <ScrollView className="flex-1" contentContainerClassName="px-lg pb-3xl" showsVerticalScrollIndicator={false}>
         <Text className="text-stone-600 text-sm font-medium mb-sm">Cover Image</Text>
         <Pressable onPress={pickCover} accessibilityLabel="Upload cover"
-          className="mb-md h-40 rounded-xl bg-white border border-dashed border-stone-300 items-center justify-center overflow-hidden">
+          className={`mb-md h-40 rounded-xl border border-dashed items-center justify-center overflow-hidden ${online ? "bg-white border-stone-300" : "bg-stone-100 border-stone-200"}`}>
           {uploading ? <ActivityIndicator color="#d97706" /> : coverUrl ? (
             <Image source={coverUrl} style={{ width: "100%", height: "100%" }} contentFit="cover" />
           ) : (
             <View className="items-center">
-              <ImagePlus size={28} color="#a8a29e" />
-              <Text className="text-stone-400 text-sm mt-xs">Tap to add cover</Text>
+              {online ? <ImagePlus size={28} color="#a8a29e" /> : <WifiOff size={28} color="#a8a29e" />}
+              <Text className="text-stone-400 text-sm mt-xs">{online ? "Tap to add cover" : "Upload requires connection"}</Text>
             </View>
           )}
         </Pressable>
