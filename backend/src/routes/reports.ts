@@ -3,7 +3,7 @@ import { Router } from "express";
 import { and, desc, eq, gte, lte, sql, type SQL } from "drizzle-orm";
 import { db, schema } from "../db/client";
 import { asyncHandler } from "../lib/httpError";
-import { requireAuth, requireRole, type AuthedRequest } from "../lib/auth";
+import { requireAuth, requireRole } from "../lib/auth";
 
 export const reportsRouter = Router();
 
@@ -16,11 +16,24 @@ function rangeToFrom(range?: string): Date | undefined {
 }
 
 // Build the shared WHERE for sales-based queries from the reporting filters:
-//   range=today|week|month|all, distributorId, category
+//   range=today|week|month|all, from=YYYY-MM-DD, to=YYYY-MM-DD, distributorId, category
 function buildSalesFilters(q: any): SQL[] {
   const conds: SQL[] = [];
-  const from = rangeToFrom(typeof q.range === "string" ? q.range : "all");
-  if (from) conds.push(gte(schema.sales.createdAt, from));
+
+  // Custom date range takes priority over range preset
+  if (q.from && typeof q.from === "string") {
+    const fromDate = new Date(q.from + "T00:00:00");
+    if (!isNaN(fromDate.getTime())) conds.push(gte(schema.sales.createdAt, fromDate));
+  } else {
+    const from = rangeToFrom(typeof q.range === "string" ? q.range : "all");
+    if (from) conds.push(gte(schema.sales.createdAt, from));
+  }
+
+  if (q.to && typeof q.to === "string") {
+    const toDate = new Date(q.to + "T23:59:59");
+    if (!isNaN(toDate.getTime())) conds.push(lte(schema.sales.createdAt, toDate));
+  }
+
   if (q.distributorId && !Number.isNaN(Number(q.distributorId))) {
     conds.push(eq(schema.sales.distributorId, Number(q.distributorId)));
   }
@@ -48,14 +61,11 @@ function sendCsv(res: any, filename: string, csv: string) {
   res.send("\uFEFF" + csv); // BOM for Excel
 }
 
-// Admin + Manager only. Everything is filterable by ?range, ?distributorId, ?category
+// Admin + Manager only. Everything is filterable by ?range, ?from, ?to, ?distributorId, ?category
 reportsRouter.get("/", requireAuth, requireRole("super_admin", "inventory_manager"), asyncHandler(async (req, res) => {
   const range = typeof req.query.range === "string" ? req.query.range : "all";
   const conds = buildSalesFilters(req.query);
   const salesWhere = conds.length ? and(...conds) : undefined;
-
-  // We join books in every sales query so category filtering + margin work.
-  const baseSales = db.select().from(schema.sales).innerJoin(schema.books, eq(schema.sales.bookId, schema.books.id));
 
   // Overall summary
   const [summary] = await db.select({
@@ -165,15 +175,10 @@ reportsRouter.get("/trends", requireAuth, requireRole("super_admin", "inventory_
 }));
 
 // PROFIT MARGIN ------------------------------------------------------------
-// Margin uses the ACTUAL unit price sold at (sales.unit_price), not retail.
-// Free sales (unit_price 0) contribute a loss of cost per copy. Filterable by
-// the same dimensions. Returns per-book, per-category, per-distributor and an
-// overall summary.
 reportsRouter.get("/margin", requireAuth, requireRole("super_admin", "inventory_manager"), asyncHandler(async (req, res) => {
   const conds = buildSalesFilters(req.query);
   const salesWhere = conds.length ? and(...conds) : undefined;
 
-  // revenue = SUM(total_value); cost = SUM(quantity * cost_price); margin = revenue - cost
   const revenueExpr = sql<string>`COALESCE(SUM(${schema.sales.totalValue}),0)`;
   const costExpr = sql<string>`COALESCE(SUM(${schema.sales.quantity} * ${schema.books.costPrice}),0)`;
 
