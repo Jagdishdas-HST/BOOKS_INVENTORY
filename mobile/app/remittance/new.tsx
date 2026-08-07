@@ -1,5 +1,5 @@
 
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import { View, Text, ScrollView, TextInput, Pressable } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -14,8 +14,6 @@ export default function NewRemittance() {
   const user = useAuth((s) => s.user);
   const params = useLocalSearchParams<{ distributorId?: string; name?: string }>();
 
-  // Admin/Manager can log on behalf of a distributor (passed via params)
-  // Distributor logs for themselves
   const isAdmin = user?.role === "super_admin" || user?.role === "inventory_manager";
   const targetDistId = params.distributorId ? Number(params.distributorId) : null;
   const targetName = params.name || user?.name || "You";
@@ -30,7 +28,6 @@ export default function NewRemittance() {
 
   useEffect(() => {
     if (isAdmin && !targetDistId) {
-      // Admin opened from Home — let them pick a distributor
       setLoadingDists(true);
       authFetch("/api/users/distributors")
         .then((d) => { setDistributors(d.filter((x: any) => x.active)); setLoadingDists(false); })
@@ -46,7 +43,6 @@ export default function NewRemittance() {
       return;
     }
 
-    // Determine distributor ID
     let distId: number | null = null;
     if (user?.role === "distributor") {
       distId = user.id;
@@ -148,7 +144,7 @@ export default function NewRemittance() {
 
         {/* Amount */}
         <View className="mb-md">
-          <Text className="text-stone-600 text-sm font-medium mb-xs">Amount (₹)</Text>
+          <Text className="text-stone-600 text-sm font-medium mb-xs">{"Amount (\u20b9)"}</Text>
           <TextInput
             value={amount}
             onChangeText={setAmount}
