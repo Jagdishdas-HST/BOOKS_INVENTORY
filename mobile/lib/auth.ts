@@ -11,6 +11,12 @@ export interface AuthUser {
   role: Role;
 }
 
+// Re-auth timeout: 30 days. After this period without a successful online
+// login, the user must re-authenticate even if offline. The token itself
+// is also 30 days on the server, so this aligns with server expiry.
+const REAUTH_TIMEOUT_MS = 30 * 24 * 60 * 60 * 1000;
+const LAST_ONLINE_AUTH_KEY = "lastOnlineAuthAt";
+
 interface AuthState {
   token: string | null;
   user: AuthUser | null;
@@ -18,6 +24,8 @@ interface AuthState {
   hydrate: () => Promise<void>;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Returns true if the user needs to re-authenticate (timeout exceeded). */
+  needsReauth: () => Promise<boolean>;
 }
 
 export const useAuth = create<AuthState>((set) => ({
@@ -34,6 +42,7 @@ export const useAuth = create<AuthState>((set) => ({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
+      signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -42,12 +51,21 @@ export const useAuth = create<AuthState>((set) => ({
     const data = await res.json();
     await AsyncStorage.setItem("authToken", data.token);
     await AsyncStorage.setItem("authUser", JSON.stringify(data.user));
+    // Record the time of the last successful online authentication.
+    await AsyncStorage.setItem(LAST_ONLINE_AUTH_KEY, new Date().toISOString());
     set({ token: data.token, user: data.user });
   },
   logout: async () => {
     await AsyncStorage.removeItem("authToken");
     await AsyncStorage.removeItem("authUser");
+    await AsyncStorage.removeItem(LAST_ONLINE_AUTH_KEY);
     set({ token: null, user: null });
+  },
+  needsReauth: async () => {
+    const raw = await AsyncStorage.getItem(LAST_ONLINE_AUTH_KEY);
+    if (!raw) return true; // Never authenticated online.
+    const lastAuth = new Date(raw).getTime();
+    return Date.now() - lastAuth > REAUTH_TIMEOUT_MS;
   },
 }));
 
@@ -65,6 +83,7 @@ export async function getToken(): Promise<string | null> {
 async function clearSession() {
   await AsyncStorage.removeItem("authToken");
   await AsyncStorage.removeItem("authUser");
+  await AsyncStorage.removeItem(LAST_ONLINE_AUTH_KEY);
   useAuth.setState({ token: null, user: null });
 }
 

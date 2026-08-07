@@ -43,7 +43,10 @@ interface QueueState {
 
 async function checkOnline(): Promise<boolean> {
   try {
-    const res = await fetch(`${API_URL}/health`, { method: "GET" });
+    const res = await fetch(`${API_URL}/health`, {
+      method: "GET",
+      signal: AbortSignal.timeout(4000),
+    });
     return res.ok;
   } catch {
     return false;
@@ -84,10 +87,20 @@ export const useOfflineQueue = create<QueueState>((set, get) => ({
 
       const survivors: QueuedSale[] = [];
       for (const q of queue) {
+        // Mark as syncing in memory (not persisted — transient UI state)
+        set((s) => ({
+          items: s.items.map((i) =>
+            i.clientId === q.clientId ? { ...i, status: "syncing" } : i
+          ),
+        }));
+
         try {
           const res = await fetch(`${API_URL}/api/sales`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
             body: JSON.stringify({
               bookId: q.bookId,
               quantity: q.quantity,
