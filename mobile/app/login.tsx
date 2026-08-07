@@ -2,14 +2,14 @@
 import { useState, useEffect } from "react";
 import {
   View, Text, TextInput, Pressable, KeyboardAvoidingView,
-  Platform, ScrollView, Modal,
+  Platform, ScrollView, Modal, BackHandler,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import {
   BookOpen, WifiOff, Lock, User, ChevronRight,
-  Shield, Package, Users, X, Eye, EyeOff, Zap,
+  Shield, Package, Users, X, Eye, EyeOff, Zap, ArrowLeft,
 } from "lucide-react-native";
 import { useAuth } from "@/lib/auth";
 import { useIsOnline, startConnectivityPolling } from "@/lib/connectivity";
@@ -117,6 +117,16 @@ export default function Login() {
       setCheckingReauth(false);
     }
   }, [hydrated, user]);
+
+  // Handle Android hardware back button inside the modal
+  useEffect(() => {
+    if (!showDemoModal) return;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      setShowDemoModal(false);
+      return true; // consume the event — don't exit the app
+    });
+    return () => sub.remove();
+  }, [showDemoModal]);
 
   const submit = async () => {
     setError("");
@@ -322,36 +332,40 @@ export default function Login() {
         animationType="slide"
         onRequestClose={() => setShowDemoModal(false)}
       >
-        <Pressable
-          className="flex-1 bg-black/50 justify-end"
-          onPress={() => setShowDemoModal(false)}
-        >
-          <Pressable onPress={e => e.stopPropagation()} className="bg-white rounded-t-3xl">
-            {/* Handle */}
-            <View className="items-center pt-md pb-sm">
+        <View className="flex-1 bg-black/50 justify-end">
+          <View className="bg-white rounded-t-3xl" style={{ maxHeight: "90%" }}>
+            {/* Handle + header row */}
+            <View className="items-center pt-md pb-xs">
               <View className="w-10 h-1 rounded-full bg-stone-200" />
+            </View>
+
+            {/* Sticky header with back button */}
+            <View className="flex-row items-center justify-between px-lg pb-md pt-xs border-b border-stone-100">
+              <Pressable
+                onPress={() => setShowDemoModal(false)}
+                accessibilityLabel="Close demo accounts"
+                className="w-9 h-9 rounded-full bg-stone-100 items-center justify-center active:opacity-70"
+              >
+                <ArrowLeft size={18} color="#78716c" />
+              </Pressable>
+              <View className="flex-1 items-center">
+                <Text className="text-stone-900 text-lg font-extrabold">Demo Accounts</Text>
+                <Text className="text-stone-500 text-xs mt-xs">Tap to sign in instantly · or fill credentials</Text>
+              </View>
+              <Pressable
+                onPress={() => setShowDemoModal(false)}
+                accessibilityLabel="Close"
+                className="w-9 h-9 rounded-full bg-stone-100 items-center justify-center active:opacity-70"
+              >
+                <X size={18} color="#78716c" />
+              </Pressable>
             </View>
 
             <ScrollView
               className="px-lg"
-              contentContainerClassName="pb-3xl"
+              contentContainerClassName="pb-3xl pt-md"
               showsVerticalScrollIndicator={false}
             >
-              {/* Header */}
-              <View className="flex-row items-center justify-between mb-lg">
-                <View>
-                  <Text className="text-stone-900 text-xl font-extrabold">Demo Accounts</Text>
-                  <Text className="text-stone-500 text-xs mt-xs">Tap to sign in instantly · or fill credentials</Text>
-                </View>
-                <Pressable
-                  onPress={() => setShowDemoModal(false)}
-                  accessibilityLabel="Close"
-                  className="w-9 h-9 rounded-full bg-stone-100 items-center justify-center"
-                >
-                  <X size={18} color="#78716c" />
-                </Pressable>
-              </View>
-
               {/* Account cards */}
               <View className="gap-sm">
                 {DEMO_ACCOUNTS.map((acc) => {
@@ -426,8 +440,8 @@ export default function Login() {
                 </View>
               </View>
             </ScrollView>
-          </Pressable>
-        </Pressable>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
