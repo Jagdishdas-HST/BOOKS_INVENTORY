@@ -6,8 +6,9 @@ import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import { Plus, ArrowRightLeft, ArrowDownLeft, PackagePlus, SlidersHorizontal } from "lucide-react-native";
 import { format } from "date-fns";
-import { authFetch } from "@/lib/auth";
+import { authFetch, useAuth } from "@/lib/auth";
 import { Skeleton, EmptyState } from "@/components/ui";
+import { ExportButton } from "@/components/ExportButton";
 
 function movementMeta(type: string) {
   switch (type) {
@@ -20,6 +21,8 @@ function movementMeta(type: string) {
 
 export default function Stock() {
   const router = useRouter();
+  const user = useAuth((s) => s.user);
+  const isAdmin = user?.role === "super_admin" || user?.role === "inventory_manager";
   const [movements, setMovements] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -47,6 +50,12 @@ export default function Stock() {
           </Pressable>
         </View>
       </View>
+
+      {isAdmin && (
+        <View className="px-lg pb-sm flex-row justify-end">
+          <ExportButton path="/api/reports/export/stock.csv" label="Export CSV" />
+        </View>
+      )}
 
       <ScrollView className="flex-1" contentContainerClassName="px-lg pb-3xl pt-sm" showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#d97706" />}>

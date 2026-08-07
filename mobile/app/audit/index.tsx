@@ -8,6 +8,7 @@ import { ChevronLeft, ShieldCheck, Filter } from "lucide-react-native";
 import { format } from "date-fns";
 import { useAuth, authFetch, roleLabel, type Role } from "@/lib/auth";
 import { Skeleton, EmptyState, Chip } from "@/components/ui";
+import { ExportButton } from "@/components/ExportButton";
 
 type AuditRow = {
   id: number;
@@ -63,30 +64,39 @@ export default function AuditLog() {
     authFetch("/api/audit/facets").then(setFacets).catch(() => {});
   }, []);
 
+  const buildParams = useCallback(() => {
+    const params = new URLSearchParams();
+    if (actionFilter !== "all") params.set("action", actionFilter);
+    const from = rangeToFrom(rangeFilter);
+    if (from) params.set("from", from);
+    return params;
+  }, [actionFilter, rangeFilter]);
+
   const load = useCallback(async () => {
     try {
-      const params = new URLSearchParams();
-      if (actionFilter !== "all") params.set("action", actionFilter);
-      const from = rangeToFrom(rangeFilter);
-      if (from) params.set("from", from);
-      const qs = params.toString();
+      const qs = buildParams().toString();
       const data = await authFetch(`/api/audit${qs ? `?${qs}` : ""}`);
       setRows(data);
     } catch {}
     setLoading(false);
-  }, [actionFilter, rangeFilter]);
+  }, [buildParams]);
 
   useEffect(() => { setLoading(true); load(); }, [load]);
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
   if (!user || user.role !== "super_admin") return null;
 
+  const exportQs = buildParams().toString();
+
   return (
     <SafeAreaView edges={["top"]} className="flex-1 bg-stone-50">
       <StatusBar style="dark" />
-      <View className="flex-row items-center px-lg pt-md pb-sm gap-sm">
-        <Pressable onPress={() => router.back()} accessibilityLabel="Back"><ChevronLeft size={26} color="#292524" /></Pressable>
-        <Text className="text-stone-900 text-xl font-extrabold">Audit Log</Text>
+      <View className="flex-row items-center justify-between px-lg pt-md pb-sm">
+        <View className="flex-row items-center gap-sm">
+          <Pressable onPress={() => router.back()} accessibilityLabel="Back"><ChevronLeft size={26} color="#292524" /></Pressable>
+          <Text className="text-stone-900 text-xl font-extrabold">Audit Log</Text>
+        </View>
+        <ExportButton path={`/api/reports/export/audit.csv${exportQs ? `?${exportQs}` : ""}`} label="Export CSV" />
       </View>
 
       <View className="px-lg pb-xs">
