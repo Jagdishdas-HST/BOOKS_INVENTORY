@@ -32,11 +32,17 @@ export interface AuthedRequest extends Request {
 
 export function requireAuth(req: AuthedRequest, _res: Response, next: NextFunction) {
   const header = req.headers.authorization;
-  if (!header || !header.startsWith("Bearer ")) {
+  // Allow a token in the Authorization header OR (for browser file downloads
+  // that cannot set headers) a ?token= query param.
+  let token: string | undefined;
+  if (header && header.startsWith("Bearer ")) token = header.slice(7);
+  else if (typeof req.query.token === "string") token = req.query.token;
+
+  if (!token) {
     throw new HttpError(401, "UNAUTHORIZED", "Missing token");
   }
   try {
-    const payload = jwt.verify(header.slice(7), SECRET) as AuthUser;
+    const payload = jwt.verify(token, SECRET) as AuthUser;
     req.user = payload;
     next();
   } catch {

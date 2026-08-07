@@ -6,7 +6,7 @@ import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import { Image } from "expo-image";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { ChevronLeft, Check, ScanLine, X } from "lucide-react-native";
+import { ChevronLeft, Check, ScanLine, X, Gift } from "lucide-react-native";
 import { authFetch } from "@/lib/auth";
 import { Button, Chip, Skeleton } from "@/components/ui";
 import { haptics } from "@/lib/haptics";
@@ -18,7 +18,7 @@ export default function NewSale() {
   const [book, setBook] = useState<any>(null);
   const [qty, setQty] = useState("1");
   const [price, setPrice] = useState("");
-  const [payment, setPayment] = useState<"cash" | "online" | "debt">("cash");
+  const [payment, setPayment] = useState<"cash" | "online" | "debt" | "free">("cash");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -49,6 +49,11 @@ export default function NewSale() {
     else { setScanMsg(`No held stock matches barcode ${code}. Select manually.`); haptics.error?.(); }
   };
 
+  const isFree = payment === "free";
+  const retail = book ? parseFloat(String(book.retailPrice)) : 0;
+  const numPrice = parseFloat(price || "0");
+  const isDiscounted = !isFree && book && numPrice < retail && numPrice >= 0;
+
   const submit = async () => {
     setError("");
     if (!book) { setError("Select a book"); return; }
@@ -57,13 +62,19 @@ export default function NewSale() {
     if (q > book.quantity) { setError(`You only hold ${book.quantity} copies`); return; }
     setSaving(true);
     try {
-      await authFetch("/api/sales", { method: "POST", body: JSON.stringify({ bookId: book.bookId, quantity: q, unitPrice: parseFloat(price), paymentType: payment }) });
+      await authFetch("/api/sales", {
+        method: "POST",
+        body: JSON.stringify({
+          bookId: book.bookId, quantity: q,
+          unitPrice: isFree ? 0 : numPrice, paymentType: payment,
+        }),
+      });
       haptics.success();
       router.back();
     } catch (e: any) { setError(e.message); setSaving(false); }
   };
 
-  const total = book && price ? (parseInt(qty || "0", 10) * parseFloat(price || "0")).toFixed(2) : "0.00";
+  const total = book && !isFree && price ? (parseInt(qty || "0", 10) * numPrice).toFixed(2) : "0.00";
 
   if (scanning) {
     return (
@@ -136,27 +147,39 @@ export default function NewSale() {
               </View>
               <View className="flex-1">
                 <Text className="text-stone-600 text-sm font-medium mb-xs">Unit Price (₹)</Text>
-                <TextInput value={price} onChangeText={setPrice} keyboardType="decimal-pad"
-                  className="rounded-xl bg-white border border-stone-200 px-md py-md text-stone-900" />
+                <TextInput value={isFree ? "0" : price} editable={!isFree} onChangeText={setPrice} keyboardType="decimal-pad"
+                  className={`rounded-xl border px-md py-md ${isFree ? "bg-stone-100 border-stone-200 text-stone-400" : "bg-white border-stone-200 text-stone-900"}`} />
               </View>
             </View>
 
+            {isDiscounted && !isFree ? (
+              <Text className="text-orange-600 text-xs mt-xs">Discounted from retail ₹{retail} — recorded as a discounted paid sale.</Text>
+            ) : null}
+
             <Text className="text-stone-600 text-sm font-medium mt-lg mb-sm">Payment Type</Text>
-            <View className="flex-row gap-sm">
+            <View className="flex-row flex-wrap gap-sm">
               <Chip label="Cash" active={payment === "cash"} onPress={() => setPayment("cash")} />
               <Chip label="Online" active={payment === "online"} onPress={() => setPayment("online")} />
               <Chip label="Debt" active={payment === "debt"} onPress={() => setPayment("debt")} />
+              <Chip label="Free / Complimentary" active={payment === "free"} onPress={() => { setPayment("free"); haptics.selection(); }} />
             </View>
+
+            {isFree ? (
+              <View className="rounded-xl bg-purple-50 border border-purple-200 p-md mt-md flex-row items-center gap-sm">
+                <Gift size={18} color="#7c3aed" />
+                <Text className="text-purple-800 text-sm flex-1">Complimentary distribution — reduces stock, ₹0 value, does not affect the outstanding balance.</Text>
+              </View>
+            ) : null}
 
             <View className="rounded-xl bg-white border border-stone-200 p-md mt-lg flex-row justify-between items-center">
               <Text className="text-stone-500">Total value</Text>
-              <Text className="text-stone-900 text-xl font-extrabold">₹{total}</Text>
+              <Text className="text-stone-900 text-xl font-extrabold">₹{isFree ? "0.00" : total}</Text>
             </View>
 
             {error ? <Text className="text-rose-600 text-sm mt-sm">{error}</Text> : null}
 
             <View className="mt-lg">
-              <Button label="Record Sale" onPress={submit} loading={saving} />
+              <Button label={isFree ? "Record Free Distribution" : "Record Sale"} onPress={submit} loading={saving} />
             </View>
           </>
         )}

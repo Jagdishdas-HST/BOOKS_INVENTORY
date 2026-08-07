@@ -4,7 +4,7 @@ import { View, Text, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { useRouter, useLocalSearchParams } from "expo-router";
-import { ChevronLeft } from "lucide-react-native";
+import { ChevronLeft, FileText, HandCoins } from "lucide-react-native";
 import { Pressable } from "react-native";
 import { format } from "date-fns";
 import { authFetch } from "@/lib/auth";
@@ -29,7 +29,7 @@ export default function DistributorDetail() {
     ]).then(([b, h, s, r]) => { setBalance(b); setHoldings(h); setSales(s); setRemits(r); setLoading(false); }).catch(() => setLoading(false));
   }, [id]);
 
-  const badge = (t: string) => t === "cash" ? "text-emerald-700" : t === "online" ? "text-sky-700" : "text-rose-700";
+  const badge = (t: string) => t === "cash" ? "text-emerald-700" : t === "online" ? "text-sky-700" : t === "free" ? "text-purple-700" : "text-rose-700";
 
   return (
     <SafeAreaView edges={["top"]} className="flex-1 bg-stone-50">
@@ -46,6 +46,22 @@ export default function DistributorDetail() {
               <Text className="text-amber-100 text-xs tracking-wider">OUTSTANDING BALANCE</Text>
               <Text className="text-white text-3xl font-extrabold mt-xs">₹{(balance?.outstanding ?? 0).toLocaleString("en-IN")}</Text>
             </View>
+
+            <View className="flex-row gap-sm mb-md">
+              <Pressable onPress={() => router.push({ pathname: "/statement", params: { distributorId: String(id), name: String(name) } })}
+                accessibilityLabel="Generate statement"
+                className="flex-1 flex-row items-center justify-center gap-sm rounded-xl bg-stone-900 py-md active:opacity-80">
+                <FileText size={18} color="#fff" />
+                <Text className="text-white font-semibold">Statement</Text>
+              </Pressable>
+              <Pressable onPress={() => router.push({ pathname: "/remittance/new", params: { distributorId: String(id), name: String(name) } })}
+                accessibilityLabel="Log remittance for distributor"
+                className="flex-1 flex-row items-center justify-center gap-sm rounded-xl bg-emerald-600 py-md active:opacity-80">
+                <HandCoins size={18} color="#fff" />
+                <Text className="text-white font-semibold">Log Payment</Text>
+              </Pressable>
+            </View>
+
             <View className="flex-row gap-sm mb-lg">
               <StatCard label="Debt sales" value={`₹${(balance?.debtTotal ?? 0).toLocaleString("en-IN")}`} tone="danger" />
               <StatCard label="Remitted" value={`₹${(balance?.remittedTotal ?? 0).toLocaleString("en-IN")}`} tone="success" />
@@ -53,6 +69,10 @@ export default function DistributorDetail() {
             <View className="flex-row gap-sm mb-lg">
               <StatCard label="Cash" value={`₹${(balance?.cashTotal ?? 0).toLocaleString("en-IN")}`} />
               <StatCard label="Online" value={`₹${(balance?.onlineTotal ?? 0).toLocaleString("en-IN")}`} />
+            </View>
+            <View className="flex-row gap-sm mb-lg">
+              <StatCard label="Free copies" value={`${balance?.freeCopies ?? 0}`} />
+              <StatCard label="Discounted" value={`₹${(balance?.discountedTotal ?? 0).toLocaleString("en-IN")}`} />
             </View>
 
             <Text className="text-stone-900 text-lg font-bold mb-sm">Stock on Hand</Text>
@@ -77,9 +97,9 @@ export default function DistributorDetail() {
                 <View key={s.id} className="flex-row justify-between items-center rounded-xl bg-white border border-stone-200 p-md">
                   <View className="flex-1 pr-sm">
                     <Text className="text-stone-900 font-semibold" numberOfLines={1}>{s.bookTitle}</Text>
-                    <Text className={`text-xs font-semibold ${badge(s.paymentType)}`}>{s.paymentType.toUpperCase()} · {format(new Date(s.createdAt), "d MMM")}</Text>
+                    <Text className={`text-xs font-semibold ${badge(s.paymentType)}`}>{s.paymentType.toUpperCase()}{s.isDiscounted ? " · DISC" : ""} · {format(new Date(s.createdAt), "d MMM")}</Text>
                   </View>
-                  <Text className="text-stone-900 font-bold">₹{s.totalValue}</Text>
+                  <Text className="text-stone-900 font-bold">{s.paymentType === "free" ? "₹0" : `₹${s.totalValue}`}</Text>
                 </View>
               ))}
               {sales.length === 0 && <Text className="text-stone-500 text-sm">No sales.</Text>}

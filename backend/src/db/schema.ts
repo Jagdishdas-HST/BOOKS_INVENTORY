@@ -64,7 +64,13 @@ export const sales = pgTable("sales", {
   quantity: integer("quantity").notNull(),
   unitPrice: numeric("unit_price", { precision: 12, scale: 2 }).notNull(),
   totalValue: numeric("total_value", { precision: 12, scale: 2 }).notNull(),
-  paymentType: text("payment_type").$type<"cash" | "online" | "debt">().notNull(),
+  // "free" added as a fourth option alongside cash/online/debt. Free carries $0
+  // value and never touches the outstanding balance (it is excluded from the
+  // debt aggregation in sales.ts, same as cash/online).
+  paymentType: text("payment_type").$type<"cash" | "online" | "debt" | "free">().notNull(),
+  // Discounted paid sale: unit price charged below retail. Trackable distinctly
+  // in reporting; NOT the same as "free".
+  isDiscounted: boolean("is_discounted").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -73,6 +79,20 @@ export const remittances = pgTable("remittances", {
   distributorId: integer("distributor_id").references(() => users.id).notNull(),
   amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
   note: text("note"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// OPTIONAL allocation layer: an admin may allocate a remittance against specific
+// debt sales. This sits ALONGSIDE the flat running balance — the outstanding
+// balance is still debtTotal - remittedTotal. Allocations are informational /
+// reconciliation records that let admins track which debt sales a payment
+// covered. They do NOT change the flat-balance math.
+export const paymentAllocations = pgTable("payment_allocations", {
+  id: serial("id").primaryKey(),
+  remittanceId: integer("remittance_id").references(() => remittances.id).notNull(),
+  saleId: integer("sale_id").references(() => sales.id).notNull(),
+  amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
+  allocatedById: integer("allocated_by_id").references(() => users.id).notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
