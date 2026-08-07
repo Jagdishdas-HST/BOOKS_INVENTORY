@@ -74,6 +74,7 @@ conflictsRouter.post("/:id/resolve", requireAuth, requireRole("super_admin", "in
   if (c.status !== "pending") throw new HttpError(400, "ALREADY_RESOLVED", "This conflict is already resolved");
 
   const [book] = await db.select().from(schema.books).where(eq(schema.books.id, c.bookId));
+  const [distributor] = await db.select().from(schema.users).where(eq(schema.users.id, c.distributorId));
 
   if (decision === "approved") {
     const [ds] = await db.select().from(schema.distributorStock).where(and(eq(schema.distributorStock.distributorId, c.distributorId), eq(schema.distributorStock.bookId, c.bookId)));
@@ -82,14 +83,26 @@ conflictsRouter.post("/:id/resolve", requireAuth, requireRole("super_admin", "in
     } else {
       await db.insert(schema.distributorStock).values({ distributorId: c.distributorId, bookId: c.bookId, quantity: -c.quantity });
     }
-    await db.insert(schema.sales).values({
+    const [saleRow] = await db.insert(schema.sales).values({
       distributorId: c.distributorId, bookId: c.bookId, quantity: c.quantity,
       unitPrice: c.unitPrice, totalValue: c.totalValue, paymentType: c.paymentType,
       isDiscounted: c.isDiscounted, clientLoggedAt: c.clientLoggedAt, clientId: c.clientId,
-    });
-    await logAudit(req.user!.id, "conflict_approved", "sale", `Forced ${c.quantity}x ${book?.title ?? `#${c.bookId}`} through (held was ${c.heldAtSync})`);
+    }).returning();
+    // Critical audit: conflict approved — actor name+ID, quantity, book title+ID, distributor name+ID, held stock at conflict time
+    await logAudit(
+      req.user!.id,
+      "conflict_approved",
+      "sale",
+      `"${req.user!.name}" (ID: ${req.user!.id}) approved conflict #${c.id}: forced ${c.quantity}x "${book?.title ?? `Book #${c.bookId}`}" (ID: ${c.bookId}) for "${distributor?.name ?? `Distributor #${c.distributorId}`}" (ID: ${c.distributorId}) — held was ${c.heldAtSync}, Sale #${saleRow.id} created`,
+    );
   } else {
-    await logAudit(req.user!.id, "conflict_rejected", "sale", `Dropped queued ${c.quantity}x ${book?.title ?? `#${c.bookId}`} (held was ${c.heldAtSync})`);
+    // Critical audit: conflict rejected — actor name+ID, quantity, book title+ID, distributor name+ID
+    await logAudit(
+      req.user!.id,
+      "conflict_rejected",
+      "sale",
+      `"${req.user!.name}" (ID: ${req.user!.id}) rejected conflict #${c.id}: dropped queued ${c.quantity}x "${book?.title ?? `Book #${c.bookId}`}" (ID: ${c.bookId}) for "${distributor?.name ?? `Distributor #${c.distributorId}`}" (ID: ${c.distributorId}) — held was ${c.heldAtSync}`,
+    );
   }
 
   const [updated] = await db.update(schema.saleConflicts)
