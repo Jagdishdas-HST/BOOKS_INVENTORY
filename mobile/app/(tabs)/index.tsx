@@ -7,10 +7,11 @@ import { useRouter } from "expo-router";
 import {
   Plus, HandCoins, Boxes, Users, ChevronRight, TrendingUp,
   ShieldCheck, BarChart3, AlertTriangle, Undo2, ClipboardCheck,
-  GitPullRequestArrow, ArrowUpRight, ArrowDownRight, BookOpen,
+  GitPullRequestArrow, ArrowUpRight, BookOpen, Activity,
+  Banknote, Target, Zap,
 } from "lucide-react-native";
 import { useAuth, authFetch, roleLabel } from "@/lib/auth";
-import { StatCard, Skeleton, EmptyState } from "@/components/ui";
+import { Skeleton, EmptyState } from "@/components/ui";
 import { OfflineBanner } from "@/components/OfflineBanner";
 import { useIsOnline, startConnectivityPolling } from "@/lib/connectivity";
 import {
@@ -19,6 +20,34 @@ import {
   type HoldingItem, type BalanceSummary,
 } from "@/lib/offlineCache";
 import { useOfflineQueue } from "@/lib/offlineQueue";
+
+const C = {
+  amber: "#f59e0b",
+  amberDark: "#d97706",
+  emerald: "#10b981",
+  rose: "#f43f5e",
+  blue: "#3b82f6",
+  navy: "#0f172a",
+  navyMid: "#1e293b",
+  slate: "#475569",
+  muted: "#94a3b8",
+};
+
+function QuickAction({ label, icon, onPress, disabled, accent = false }: {
+  label: string; icon: React.ReactNode; onPress: () => void; disabled?: boolean; accent?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityLabel={label}
+      className={`flex-1 items-center justify-center rounded-2xl py-md gap-xs ${accent ? "bg-amber-500" : disabled ? "bg-slate-100" : "bg-white border border-slate-200"} active:opacity-80`}
+      style={!accent && !disabled ? { shadowColor: "#000", shadowOpacity: 0.04, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 } : {}}>
+      {icon}
+      <Text className={`text-xs font-bold ${accent ? "text-white" : disabled ? "text-slate-400" : "text-slate-700"}`}>{label}</Text>
+    </Pressable>
+  );
+}
 
 export default function Home() {
   const router = useRouter();
@@ -109,22 +138,36 @@ export default function Home() {
   const totalStock = holdings.reduce((a, h) => a + h.quantity, 0);
   const dataCachedAt = balanceCachedAt || holdingsCachedAt;
   const inr = (n: number) => `₹${Math.round(n ?? 0).toLocaleString("en-IN")}`;
+  const inrK = (n: number) => {
+    if (n >= 100000) return `₹${(n / 100000).toFixed(1)}L`;
+    if (n >= 1000) return `₹${(n / 1000).toFixed(1)}K`;
+    return `₹${Math.round(n)}`;
+  };
 
   return (
-    <SafeAreaView edges={["top"]} className="flex-1 bg-stone-50">
+    <SafeAreaView edges={["top"]} className="flex-1 bg-slate-50">
       <StatusBar style="dark" />
       <ScrollView
         className="flex-1"
         contentContainerClassName="pb-3xl"
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#d97706" />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.amberDark} />}
       >
-        {/* Header */}
-        <View className="px-lg pt-md pb-lg bg-white border-b border-stone-100">
-          <Text className="text-stone-500 text-xs font-medium">{roleLabel[user.role]}</Text>
-          <Text className="text-stone-900 text-2xl font-extrabold mt-xs">
-            Hare Krishna, {user.name.split(" ")[0]} 🙏
-          </Text>
+        {/* ── Header ── */}
+        <View className="px-lg pt-md pb-lg bg-white border-b border-slate-100"
+          style={{ shadowColor: "#000", shadowOpacity: 0.04, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 }}>
+          <View className="flex-row items-center justify-between">
+            <View className="flex-1">
+              <Text className="text-slate-500 text-xs font-semibold uppercase tracking-wider">{roleLabel[user.role]}</Text>
+              <Text className="text-slate-900 text-2xl font-extrabold mt-xs">
+                Welcome, {user.name.split(" ")[0]}
+              </Text>
+            </View>
+            <View className="w-11 h-11 rounded-2xl items-center justify-center"
+              style={{ backgroundColor: C.navy }}>
+              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 16 }}>{user.name[0]}</Text>
+            </View>
+          </View>
         </View>
 
         <OfflineBanner
@@ -134,71 +177,117 @@ export default function Home() {
 
         {isDistributor ? (
           <>
-            {/* Balance hero */}
-            <View className="mx-lg mt-lg rounded-2xl bg-amber-600 p-xl">
-              <Text className="text-amber-100 text-xs tracking-widest font-semibold uppercase">Outstanding Balance</Text>
-              <Text className="text-white text-4xl font-extrabold mt-xs">
-                {loading && !balance ? "—" : inr(balance?.outstanding ?? 0)}
-              </Text>
-              {!online && dataCachedAt ? (
-                <Text className="text-amber-200 text-xs mt-xs">
-                  as of {new Date(dataCachedAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", hour12: true })}
-                </Text>
-              ) : null}
-              <View className="flex-row mt-lg pt-md border-t border-amber-400/40 gap-xl">
-                <View>
-                  <Text className="text-amber-100 text-xs font-medium">DEBT SALES</Text>
-                  <Text className="text-white font-extrabold text-lg">{inr(balance?.debtTotal ?? 0)}</Text>
+            {/* ── Balance Hero ── */}
+            <View className="mx-lg mt-lg rounded-3xl overflow-hidden"
+              style={{ backgroundColor: C.navy, shadowColor: C.navy, shadowOpacity: 0.3, shadowRadius: 20, shadowOffset: { width: 0, height: 8 }, elevation: 10 }}>
+              <View className="p-xl">
+                <View className="flex-row items-start justify-between">
+                  <View className="flex-1">
+                    <View className="flex-row items-center gap-xs mb-xs">
+                      <View className="w-2 h-2 rounded-full bg-rose-400" />
+                      <Text style={{ color: "#94a3b8", fontSize: 11, fontWeight: "700", letterSpacing: 1.5, textTransform: "uppercase" }}>
+                        Outstanding Balance
+                      </Text>
+                    </View>
+                    <Text style={{ color: "#fff", fontSize: 38, fontWeight: "800", lineHeight: 44 }}>
+                      {loading && !balance ? "—" : inr(balance?.outstanding ?? 0)}
+                    </Text>
+                    {!online && dataCachedAt ? (
+                      <Text style={{ color: "#64748b", fontSize: 11, marginTop: 4 }}>
+                        as of {new Date(dataCachedAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", hour12: true })}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <View style={{ backgroundColor: "#f43f5e22", borderRadius: 16, padding: 10 }}>
+                    <Target size={22} color={C.rose} />
+                  </View>
                 </View>
-                <View>
-                  <Text className="text-amber-100 text-xs font-medium">REMITTED</Text>
-                  <Text className="text-white font-extrabold text-lg">{inr(balance?.remittedTotal ?? 0)}</Text>
+
+                <View style={{ height: 1, backgroundColor: "#1e293b", marginVertical: 16 }} />
+
+                <View className="flex-row gap-xl">
+                  <View>
+                    <Text style={{ color: "#64748b", fontSize: 10, fontWeight: "700", letterSpacing: 1, textTransform: "uppercase" }}>Debt Sales</Text>
+                    <Text style={{ color: "#fff", fontSize: 20, fontWeight: "800", marginTop: 2 }}>{inrK(balance?.debtTotal ?? 0)}</Text>
+                  </View>
+                  <View>
+                    <Text style={{ color: "#64748b", fontSize: 10, fontWeight: "700", letterSpacing: 1, textTransform: "uppercase" }}>Remitted</Text>
+                    <Text style={{ color: "#fff", fontSize: 20, fontWeight: "800", marginTop: 2 }}>{inrK(balance?.remittedTotal ?? 0)}</Text>
+                  </View>
+                  <View>
+                    <Text style={{ color: "#64748b", fontSize: 10, fontWeight: "700", letterSpacing: 1, textTransform: "uppercase" }}>Cash</Text>
+                    <Text style={{ color: C.emerald, fontSize: 20, fontWeight: "800", marginTop: 2 }}>{inrK(balance?.cashTotal ?? 0)}</Text>
+                  </View>
                 </View>
               </View>
             </View>
 
-            <View className="flex-row px-lg mt-sm gap-sm">
-              <StatCard label="Books held" value={String(totalStock)} />
-              <StatCard label="Cash sales" value={inr(balance?.cashTotal ?? 0)} tone="success" />
+            {/* ── Stock Summary ── */}
+            <View className="flex-row px-lg mt-md gap-sm">
+              <View className="flex-1 rounded-2xl bg-white border border-slate-100 p-md"
+                style={{ shadowColor: "#000", shadowOpacity: 0.04, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 }}>
+                <View className="w-8 h-8 rounded-xl bg-blue-100 items-center justify-center mb-sm">
+                  <Boxes size={16} color={C.blue} />
+                </View>
+                <Text className="text-slate-500 text-xs font-semibold uppercase tracking-wide">Books Held</Text>
+                <Text className="text-slate-900 text-2xl font-extrabold mt-xs">{totalStock}</Text>
+                <Text className="text-slate-400 text-xs mt-xs">copies on hand</Text>
+              </View>
+              <View className="flex-1 rounded-2xl bg-white border border-slate-100 p-md"
+                style={{ shadowColor: "#000", shadowOpacity: 0.04, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 }}>
+                <View className="w-8 h-8 rounded-xl bg-emerald-100 items-center justify-center mb-sm">
+                  <Banknote size={16} color={C.emerald} />
+                </View>
+                <Text className="text-slate-500 text-xs font-semibold uppercase tracking-wide">Cash Sales</Text>
+                <Text className="text-emerald-600 text-2xl font-extrabold mt-xs">{inrK(balance?.cashTotal ?? 0)}</Text>
+                <Text className="text-slate-400 text-xs mt-xs">collected</Text>
+              </View>
             </View>
 
-            <View className="px-lg mt-xl">
-              <Text className="text-stone-900 text-base font-extrabold mb-sm">Quick Actions</Text>
+            {/* ── Quick Actions ── */}
+            <View className="px-lg mt-lg">
+              <Text className="text-slate-900 text-base font-extrabold mb-md">Quick Actions</Text>
               <View className="flex-row gap-sm">
-                <Pressable onPress={() => router.push("/sale/new")} accessibilityLabel="Log a sale"
-                  className="flex-1 flex-row items-center justify-center gap-xs rounded-xl bg-amber-600 py-md active:opacity-80">
-                  <Plus size={16} color="#fff" />
-                  <Text className="text-white font-semibold">Log Sale</Text>
-                </Pressable>
-                <Pressable onPress={() => { if (!online) return; router.push("/remittance/new"); }}
-                  accessibilityLabel="Log a remittance"
-                  className={`flex-1 flex-row items-center justify-center gap-xs rounded-xl py-md ${online ? "bg-stone-200 active:opacity-70" : "bg-stone-100"}`}>
-                  <HandCoins size={16} color={online ? "#292524" : "#a8a29e"} />
-                  <Text className={`font-semibold ${online ? "text-stone-900" : "text-stone-400"}`}>Remit</Text>
-                </Pressable>
+                <QuickAction
+                  label="Log Sale"
+                  icon={<Plus size={20} color="#fff" />}
+                  onPress={() => router.push("/sale/new")}
+                  accent
+                />
+                <QuickAction
+                  label="Remit"
+                  icon={<HandCoins size={20} color={online ? C.slate : C.muted} />}
+                  onPress={() => { if (!online) return; router.push("/remittance/new"); }}
+                  disabled={!online}
+                />
               </View>
             </View>
 
+            {/* ── Stock on Hand ── */}
             <View className="px-lg mt-xl">
-              <Text className="text-stone-900 text-base font-extrabold mb-sm">My Stock on Hand</Text>
+              <Text className="text-slate-900 text-base font-extrabold mb-md">My Stock on Hand</Text>
               {loading && holdings.length === 0 ? (
                 <Skeleton />
               ) : holdings.length === 0 ? (
-                <View className="rounded-xl bg-white border border-stone-200">
-                  <EmptyState icon={<Boxes size={26} color="#a8a29e" />} title="No stock assigned yet"
+                <View className="rounded-2xl bg-white border border-slate-200 overflow-hidden">
+                  <EmptyState icon={<Boxes size={26} color="#94a3b8" />} title="No stock assigned yet"
                     description="Your manager will assign books to you soon." />
                 </View>
               ) : (
                 <View className="gap-sm">
                   {holdings.map((h) => (
-                    <View key={h.id} className="flex-row items-center justify-between rounded-xl bg-white border border-stone-200 p-md">
+                    <View key={h.id} className="flex-row items-center justify-between rounded-2xl bg-white border border-slate-100 p-md"
+                      style={{ shadowColor: "#000", shadowOpacity: 0.03, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 }}>
+                      <View className="w-10 h-10 rounded-xl bg-amber-100 items-center justify-center mr-sm">
+                        <BookOpen size={18} color={C.amberDark} />
+                      </View>
                       <View className="flex-1">
-                        <Text className="text-stone-900 font-semibold" numberOfLines={1}>{h.title}</Text>
-                        <Text className="text-stone-500 text-xs">{h.category} · {h.language}</Text>
+                        <Text className="text-slate-900 font-semibold" numberOfLines={1}>{h.title}</Text>
+                        <Text className="text-slate-500 text-xs">{h.category} · {h.language}</Text>
                       </View>
                       <View className="items-end">
-                        <Text className="text-amber-700 font-extrabold text-lg">{h.quantity}</Text>
-                        <Text className="text-stone-400 text-xs">copies</Text>
+                        <Text style={{ color: C.amberDark, fontWeight: "800", fontSize: 20 }}>{h.quantity}</Text>
+                        <Text className="text-slate-400 text-xs">copies</Text>
                       </View>
                     </View>
                   ))}
@@ -208,76 +297,95 @@ export default function Home() {
           </>
         ) : (
           <>
-            {/* This Month Summary for admin/manager */}
+            {/* ── This Month Summary ── */}
             {isManagerOrAdmin && monthSummary && (
-              <View className="mx-lg mt-lg rounded-2xl bg-amber-600 p-xl">
-                <View className="flex-row items-center justify-between mb-xs">
-                  <Text className="text-amber-100 text-xs tracking-widest font-semibold uppercase">This Month</Text>
-                  <Pressable onPress={() => router.push("/reports")} accessibilityLabel="View full reports"
-                    className="flex-row items-center gap-xs bg-amber-500/50 rounded-full px-sm py-xs active:opacity-80">
-                    <BarChart3 size={12} color="#fff" />
-                    <Text className="text-white text-xs font-semibold">Full Report</Text>
-                  </Pressable>
-                </View>
-                <Text className="text-white text-3xl font-extrabold mt-xs">{inr(monthSummary.totalSalesValue)}</Text>
-                <View className="flex-row mt-md pt-sm border-t border-amber-400/40 gap-xl">
-                  <View>
-                    <Text className="text-amber-200 text-xs font-medium">COPIES</Text>
-                    <Text className="text-white font-extrabold">{monthSummary.totalCopies.toLocaleString("en-IN")}</Text>
+              <View className="mx-lg mt-lg rounded-3xl overflow-hidden"
+                style={{ backgroundColor: C.navy, shadowColor: C.navy, shadowOpacity: 0.3, shadowRadius: 20, shadowOffset: { width: 0, height: 8 }, elevation: 10 }}>
+                <View className="p-xl">
+                  <View className="flex-row items-start justify-between">
+                    <View className="flex-1">
+                      <View className="flex-row items-center gap-xs mb-xs">
+                        <View className="w-2 h-2 rounded-full bg-amber-400" />
+                        <Text style={{ color: "#94a3b8", fontSize: 11, fontWeight: "700", letterSpacing: 1.5, textTransform: "uppercase" }}>
+                          This Month
+                        </Text>
+                      </View>
+                      <Text style={{ color: "#fff", fontSize: 36, fontWeight: "800", lineHeight: 42 }}>
+                        {inr(monthSummary.totalSalesValue)}
+                      </Text>
+                    </View>
+                    <Pressable onPress={() => router.push("/reports")} accessibilityLabel="View full reports"
+                      className="flex-row items-center gap-xs rounded-full px-md py-sm active:opacity-80"
+                      style={{ backgroundColor: "#f59e0b22" }}>
+                      <BarChart3 size={14} color={C.amber} />
+                      <Text style={{ color: C.amber, fontSize: 12, fontWeight: "700" }}>Analytics</Text>
+                    </Pressable>
                   </View>
-                  <View>
-                    <Text className="text-amber-200 text-xs font-medium">CASH</Text>
-                    <Text className="text-white font-extrabold">{inr(monthSummary.cashTotal)}</Text>
-                  </View>
-                  <View>
-                    <Text className="text-amber-200 text-xs font-medium">OUTSTANDING</Text>
-                    <Text className="text-white font-extrabold">{inr(monthSummary.outstanding)}</Text>
+
+                  <View style={{ height: 1, backgroundColor: "#1e293b", marginVertical: 16 }} />
+
+                  <View className="flex-row gap-xl">
+                    <View>
+                      <Text style={{ color: "#64748b", fontSize: 10, fontWeight: "700", letterSpacing: 1, textTransform: "uppercase" }}>Copies</Text>
+                      <Text style={{ color: "#fff", fontSize: 18, fontWeight: "800", marginTop: 2 }}>{monthSummary.totalCopies.toLocaleString("en-IN")}</Text>
+                    </View>
+                    <View>
+                      <Text style={{ color: "#64748b", fontSize: 10, fontWeight: "700", letterSpacing: 1, textTransform: "uppercase" }}>Cash</Text>
+                      <Text style={{ color: C.emerald, fontSize: 18, fontWeight: "800", marginTop: 2 }}>{inrK(monthSummary.cashTotal)}</Text>
+                    </View>
+                    <View>
+                      <Text style={{ color: "#64748b", fontSize: 10, fontWeight: "700", letterSpacing: 1, textTransform: "uppercase" }}>Outstanding</Text>
+                      <Text style={{ color: C.rose, fontSize: 18, fontWeight: "800", marginTop: 2 }}>{inrK(monthSummary.outstanding)}</Text>
+                    </View>
                   </View>
                 </View>
               </View>
             )}
 
-            {/* Low stock alert */}
+            {/* ── Alerts ── */}
             {!loading && lowStock.length > 0 && (
-              <View className="mx-lg mt-md rounded-xl bg-rose-50 border border-rose-200 p-md">
-                <View className="flex-row items-center gap-xs mb-xs">
-                  <AlertTriangle size={18} color="#e11d48" />
+              <View className="mx-lg mt-md rounded-2xl bg-rose-50 border border-rose-200 p-md"
+                style={{ shadowColor: C.rose, shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 }}>
+                <View className="flex-row items-center gap-sm mb-sm">
+                  <View className="w-8 h-8 rounded-xl bg-rose-100 items-center justify-center">
+                    <AlertTriangle size={16} color={C.rose} />
+                  </View>
                   <Text className="text-rose-700 font-bold">
                     {lowStock.length} title{lowStock.length === 1 ? "" : "s"} low on stock
                   </Text>
                 </View>
-                <View className="gap-xs mt-xs">
+                <View className="gap-xs">
                   {lowStock.slice(0, 4).map((b) => (
                     <Pressable key={b.id}
                       onPress={() => router.push({ pathname: "/book/[id]", params: { id: String(b.id) } })}
-                      className="flex-row items-center justify-between active:opacity-70">
-                      <Text className="text-stone-800 text-sm flex-1" numberOfLines={1}>{b.title}</Text>
-                      <Text className="text-rose-700 text-sm font-semibold ml-sm">
-                        {b.warehouseStock} left · reorder ≤{b.reorderThreshold}
+                      className="flex-row items-center justify-between py-xs active:opacity-70">
+                      <Text className="text-slate-800 text-sm flex-1 font-medium" numberOfLines={1}>{b.title}</Text>
+                      <Text className="text-rose-600 text-sm font-bold ml-sm">
+                        {b.warehouseStock} left
                       </Text>
                     </Pressable>
                   ))}
                   {lowStock.length > 4 && (
-                    <Text className="text-rose-600 text-xs mt-xs">+{lowStock.length - 4} more below threshold</Text>
+                    <Text className="text-rose-500 text-xs font-medium mt-xs">+{lowStock.length - 4} more below threshold</Text>
                   )}
                 </View>
               </View>
             )}
 
-            {/* Conflict banner */}
             {!loading && conflictCount > 0 && (
               <View className="px-lg mt-md">
                 <Pressable onPress={() => router.push("/conflicts")} accessibilityLabel="Review sync conflicts"
-                  className="flex-row items-center justify-between rounded-xl bg-rose-600 p-md active:opacity-80">
+                  className="flex-row items-center justify-between rounded-2xl p-md active:opacity-80"
+                  style={{ backgroundColor: C.rose, shadowColor: C.rose, shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 6 }}>
                   <View className="flex-row items-center gap-sm">
-                    <View className="w-9 h-9 rounded-full bg-rose-500 items-center justify-center">
+                    <View className="w-9 h-9 rounded-xl items-center justify-center" style={{ backgroundColor: "#ffffff22" }}>
                       <GitPullRequestArrow size={18} color="#fff" />
                     </View>
                     <View>
-                      <Text className="text-white font-semibold">
+                      <Text className="text-white font-bold">
                         {conflictCount} sale{conflictCount === 1 ? "" : "s"} need review
                       </Text>
-                      <Text className="text-rose-100 text-xs">Offline sales that failed a stock re-check</Text>
+                      <Text style={{ color: "#fecdd3", fontSize: 12 }}>Offline sales that failed a stock re-check</Text>
                     </View>
                   </View>
                   <ChevronRight size={18} color="#fecdd3" />
@@ -285,117 +393,148 @@ export default function Home() {
               </View>
             )}
 
-            {/* Quick actions grid */}
-            <View className="px-lg mt-md">
-              <Text className="text-stone-900 text-base font-extrabold mb-sm">Quick Actions</Text>
-              <View className="flex-row gap-sm">
-                <Pressable onPress={() => { if (online) router.push("/stock/assign"); }}
-                  accessibilityLabel="Assign stock"
-                  className={`flex-1 flex-row items-center justify-center gap-xs rounded-xl py-md ${online ? "bg-amber-600 active:opacity-80" : "bg-stone-200"}`}>
-                  <Boxes size={16} color={online ? "#fff" : "#a8a29e"} />
-                  <Text className={`font-semibold ${online ? "text-white" : "text-stone-400"}`}>Assign Stock</Text>
-                </Pressable>
-                <Pressable onPress={() => router.push("/(tabs)/catalog")} accessibilityLabel="Manage catalog"
-                  className="flex-1 flex-row items-center justify-center gap-xs rounded-xl bg-stone-200 py-md active:opacity-70">
-                  <BookOpen size={16} color="#292524" />
-                  <Text className="text-stone-900 font-semibold">Catalog</Text>
-                </Pressable>
+            {/* ── Quick Actions Grid ── */}
+            <View className="px-lg mt-lg">
+              <Text className="text-slate-900 text-base font-extrabold mb-md">Quick Actions</Text>
+              <View className="flex-row gap-sm mb-sm">
+                <QuickAction
+                  label="Assign Stock"
+                  icon={<Boxes size={20} color={online ? "#fff" : C.muted} />}
+                  onPress={() => { if (online) router.push("/stock/assign"); }}
+                  disabled={!online}
+                  accent={online}
+                />
+                <QuickAction
+                  label="Catalog"
+                  icon={<BookOpen size={20} color={C.slate} />}
+                  onPress={() => router.push("/(tabs)/catalog")}
+                />
               </View>
-              <View className="flex-row gap-sm mt-sm">
-                <Pressable onPress={() => { if (online) router.push("/stock/return"); }}
-                  accessibilityLabel="Return stock"
-                  className={`flex-1 flex-row items-center justify-center gap-xs rounded-xl py-md ${online ? "bg-stone-200 active:opacity-70" : "bg-stone-100"}`}>
-                  <Undo2 size={16} color={online ? "#292524" : "#a8a29e"} />
-                  <Text className={`font-semibold ${online ? "text-stone-900" : "text-stone-400"}`}>Return Stock</Text>
-                </Pressable>
-                <Pressable onPress={() => { if (online) router.push("/stock/reconcile"); }}
-                  accessibilityLabel="Reconcile stock"
-                  className={`flex-1 flex-row items-center justify-center gap-xs rounded-xl py-md ${online ? "bg-stone-200 active:opacity-70" : "bg-stone-100"}`}>
-                  <ClipboardCheck size={16} color={online ? "#292524" : "#a8a29e"} />
-                  <Text className={`font-semibold ${online ? "text-stone-900" : "text-stone-400"}`}>Reconcile</Text>
-                </Pressable>
+              <View className="flex-row gap-sm">
+                <QuickAction
+                  label="Return Stock"
+                  icon={<Undo2 size={20} color={online ? C.slate : C.muted} />}
+                  onPress={() => { if (online) router.push("/stock/return"); }}
+                  disabled={!online}
+                />
+                <QuickAction
+                  label="Reconcile"
+                  icon={<ClipboardCheck size={20} color={online ? C.slate : C.muted} />}
+                  onPress={() => { if (online) router.push("/stock/reconcile"); }}
+                  disabled={!online}
+                />
               </View>
             </View>
 
-            {/* Reports & Analytics card */}
+            {/* ── Analytics Card ── */}
             {isManagerOrAdmin && (
               <View className="px-lg mt-md">
                 <Pressable onPress={() => { if (online) router.push("/reports"); }}
-                  accessibilityLabel="View reports"
-                  className={`flex-row items-center justify-between rounded-xl border p-md ${online ? "bg-amber-50 border-amber-200 active:opacity-80" : "bg-stone-50 border-stone-200"}`}>
-                  <View className="flex-row items-center gap-sm">
-                    <View className={`w-10 h-10 rounded-full items-center justify-center ${online ? "bg-amber-600" : "bg-stone-300"}`}>
-                      <BarChart3 size={20} color="#fff" />
+                  accessibilityLabel="View analytics"
+                  className="rounded-2xl overflow-hidden active:opacity-90"
+                  style={{
+                    backgroundColor: online ? "#fffbeb" : "#f8fafc",
+                    borderWidth: 1,
+                    borderColor: online ? "#fde68a" : "#e2e8f0",
+                    shadowColor: online ? C.amber : "#000",
+                    shadowOpacity: online ? 0.12 : 0.04,
+                    shadowRadius: 12,
+                    shadowOffset: { width: 0, height: 4 },
+                    elevation: 3,
+                  }}>
+                  <View className="p-md flex-row items-center gap-md">
+                    <View className="w-12 h-12 rounded-2xl items-center justify-center"
+                      style={{ backgroundColor: online ? C.amberDark : "#e2e8f0" }}>
+                      <BarChart3 size={22} color="#fff" />
                     </View>
-                    <View>
-                      <Text className="text-stone-900 font-extrabold">Reports & Analytics</Text>
-                      <Text className="text-stone-500 text-xs">
-                        {online ? "Charts, trends, leaderboard & margins" : "Requires connection"}
+                    <View className="flex-1">
+                      <Text className="text-slate-900 font-extrabold text-base">Business Analytics</Text>
+                      <Text className="text-slate-500 text-xs mt-xs">
+                        {online ? "Charts · Trends · Leaderboard · Margins" : "Requires connection"}
                       </Text>
                     </View>
+                    <View className="w-8 h-8 rounded-full items-center justify-center"
+                      style={{ backgroundColor: online ? C.amberDark + "18" : "#f1f5f9" }}>
+                      <ChevronRight size={16} color={online ? C.amberDark : C.muted} />
+                    </View>
                   </View>
-                  <ChevronRight size={18} color={online ? "#d97706" : "#a8a29e"} />
                 </Pressable>
               </View>
             )}
 
-            {/* Sync Conflicts */}
+            {/* ── Sync Conflicts ── */}
             {isManagerOrAdmin && (
               <View className="px-lg mt-sm">
                 <Pressable onPress={() => router.push("/conflicts")} accessibilityLabel="Sync conflicts"
-                  className="flex-row items-center justify-between rounded-xl bg-white border border-stone-200 p-md active:opacity-80">
+                  className="flex-row items-center justify-between rounded-2xl bg-white border border-slate-100 p-md active:opacity-80"
+                  style={{ shadowColor: "#000", shadowOpacity: 0.04, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 }}>
                   <View className="flex-row items-center gap-sm">
-                    <View className="w-10 h-10 rounded-full bg-rose-100 items-center justify-center">
-                      <GitPullRequestArrow size={18} color="#e11d48" />
+                    <View className="w-10 h-10 rounded-xl bg-rose-100 items-center justify-center">
+                      <GitPullRequestArrow size={18} color={C.rose} />
                     </View>
                     <View>
-                      <Text className="text-stone-900 font-semibold">Sync Conflicts</Text>
-                      <Text className="text-stone-500 text-xs">Review flagged offline sales</Text>
+                      <Text className="text-slate-900 font-semibold">Sync Conflicts</Text>
+                      <Text className="text-slate-500 text-xs">Review flagged offline sales</Text>
                     </View>
                   </View>
-                  <ChevronRight size={18} color="#a8a29e" />
+                  <ChevronRight size={18} color={C.muted} />
                 </Pressable>
               </View>
             )}
 
-            {/* Audit Log */}
+            {/* ── Audit Log ── */}
             {isSuperAdmin && (
               <View className="px-lg mt-sm">
                 <Pressable onPress={() => { if (online) router.push("/audit"); }}
                   accessibilityLabel="View audit log"
-                  className={`flex-row items-center justify-between rounded-xl p-md ${online ? "bg-stone-900 active:opacity-80" : "bg-stone-700"}`}>
+                  className="flex-row items-center justify-between rounded-2xl p-md active:opacity-80"
+                  style={{
+                    backgroundColor: C.navy,
+                    shadowColor: C.navy,
+                    shadowOpacity: 0.2,
+                    shadowRadius: 12,
+                    shadowOffset: { width: 0, height: 4 },
+                    elevation: 4,
+                  }}>
                   <View className="flex-row items-center gap-sm">
-                    <View className="w-10 h-10 rounded-full bg-stone-700 items-center justify-center">
-                      <ShieldCheck size={18} color="#fbbf24" />
+                    <View className="w-10 h-10 rounded-xl items-center justify-center" style={{ backgroundColor: "#ffffff15" }}>
+                      <ShieldCheck size={18} color={C.amber} />
                     </View>
                     <View>
                       <Text className="text-white font-semibold">Audit Log</Text>
-                      <Text className="text-stone-400 text-xs">
+                      <Text style={{ color: "#64748b", fontSize: 12 }}>
                         {online ? "Append-only system activity" : "Requires connection"}
                       </Text>
                     </View>
                   </View>
-                  <ChevronRight size={18} color="#a8a29e" />
+                  <ChevronRight size={18} color="#475569" />
                 </Pressable>
               </View>
             )}
 
-            {/* Distributors list */}
+            {/* ── Distributors ── */}
             <View className="px-lg mt-xl">
-              <View className="flex-row items-center gap-xs mb-sm">
-                <Users size={18} color="#292524" />
-                <Text className="text-stone-900 text-base font-extrabold">Distributors</Text>
+              <View className="flex-row items-center justify-between mb-md">
+                <View className="flex-row items-center gap-sm">
+                  <Users size={18} color={C.navy} />
+                  <Text className="text-slate-900 text-base font-extrabold">Distributors</Text>
+                </View>
+                {distributors.length > 0 && (
+                  <View className="rounded-full px-sm py-xs" style={{ backgroundColor: C.navy + "12" }}>
+                    <Text style={{ color: C.navy, fontSize: 11, fontWeight: "700" }}>{distributors.length} active</Text>
+                  </View>
+                )}
               </View>
               {loading ? (
                 <Skeleton />
               ) : !online && distributors.length === 0 ? (
-                <View className="rounded-xl bg-white border border-stone-200">
-                  <EmptyState icon={<Users size={26} color="#a8a29e" />} title="Offline"
+                <View className="rounded-2xl bg-white border border-slate-200 overflow-hidden">
+                  <EmptyState icon={<Users size={26} color="#94a3b8" />} title="Offline"
                     description="Distributor list requires a connection." />
                 </View>
               ) : distributors.length === 0 ? (
-                <View className="rounded-xl bg-white border border-stone-200">
-                  <EmptyState icon={<Users size={26} color="#a8a29e" />} title="No distributors"
+                <View className="rounded-2xl bg-white border border-slate-200 overflow-hidden">
+                  <EmptyState icon={<Users size={26} color="#94a3b8" />} title="No distributors"
                     description="Create distributor accounts from Profile." />
                 </View>
               ) : (
@@ -403,17 +542,21 @@ export default function Home() {
                   {distributors.map((d) => (
                     <Pressable key={d.id}
                       onPress={() => router.push({ pathname: "/distributor/[id]", params: { id: String(d.id), name: d.name } })}
-                      className="flex-row items-center justify-between rounded-xl bg-white border border-stone-200 p-md active:opacity-80">
+                      className="flex-row items-center justify-between rounded-2xl bg-white border border-slate-100 p-md active:opacity-80"
+                      style={{ shadowColor: "#000", shadowOpacity: 0.03, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 }}>
                       <View className="flex-row items-center gap-sm flex-1">
-                        <View className="w-10 h-10 rounded-full bg-amber-100 items-center justify-center">
-                          <Text className="text-amber-700 font-extrabold">{d.name[0]}</Text>
+                        <View className="w-11 h-11 rounded-2xl items-center justify-center"
+                          style={{ backgroundColor: C.navy }}>
+                          <Text style={{ color: "#fff", fontWeight: "800", fontSize: 15 }}>{d.name[0]}</Text>
                         </View>
                         <View className="flex-1">
-                          <Text className="text-stone-900 font-semibold">{d.name}</Text>
-                          <Text className="text-stone-500 text-xs">@{d.username}{!d.active ? " · inactive" : ""}</Text>
+                          <Text className="text-slate-900 font-semibold">{d.name}</Text>
+                          <Text className="text-slate-500 text-xs">@{d.username}{!d.active ? " · inactive" : ""}</Text>
                         </View>
                       </View>
-                      <ChevronRight size={18} color="#a8a29e" />
+                      <View className="w-8 h-8 rounded-full items-center justify-center bg-slate-100">
+                        <ChevronRight size={16} color={C.muted} />
+                      </View>
                     </Pressable>
                   ))}
                 </View>
