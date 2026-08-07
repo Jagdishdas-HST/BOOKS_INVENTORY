@@ -5,9 +5,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import { Image } from "expo-image";
-import { CameraView, useCameraPermissions } from "expo-camera";
+import { Camera, CameraView, useCameraPermissions } from "expo-camera";
 import {
-  ChevronLeft, Check, ScanLine, X, Gift, WifiOff, CloudUpload, Wifi,
+  ChevronLeft, Check, ScanLine, X, Gift, WifiOff, CloudUpload, Wifi, BookOpen,
 } from "lucide-react-native";
 import { authFetch } from "@/lib/auth";
 import { Button, Chip, Skeleton } from "@/components/ui";
@@ -335,6 +335,3 @@ export default function NewSale() {
     </SafeAreaView>
   );
 }
-
-// Local import to avoid TS error (BookOpen used in JSX above)
-import { BookOpen } from "lucide-react-native";
