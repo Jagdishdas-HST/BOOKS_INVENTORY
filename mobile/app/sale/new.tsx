@@ -1,13 +1,12 @@
 
 import { useEffect, useState } from "react";
-import { View, Text, ScrollView, TextInput, Pressable, Platform } from "react-native";
+import { View, Text, ScrollView, TextInput, Pressable } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import { Image } from "expo-image";
-import { Camera, CameraView, useCameraPermissions } from "expo-camera";
 import {
-  ChevronLeft, Check, ScanLine, X, Gift, WifiOff, CloudUpload, Wifi, BookOpen,
+  ChevronLeft, Check, Gift, WifiOff, CloudUpload, Wifi, BookOpen,
 } from "lucide-react-native";
 import { authFetch } from "@/lib/auth";
 import { Button, Chip, Skeleton } from "@/components/ui";
@@ -15,7 +14,6 @@ import { haptics } from "@/lib/haptics";
 import { useOfflineQueue } from "@/lib/offlineQueue";
 import { useIsOnline, startConnectivityPolling } from "@/lib/connectivity";
 import { loadHoldingsCache, type HoldingItem } from "@/lib/offlineCache";
-import { API_URL } from "@/constants/api";
 
 export default function NewSale() {
   const router = useRouter();
@@ -31,9 +29,6 @@ export default function NewSale() {
   const [payment, setPayment] = useState<"cash" | "online" | "debt" | "free">("cash");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [scanning, setScanning] = useState(false);
-  const [scanMsg, setScanMsg] = useState("");
-  const [permission, requestPermission] = useCameraPermissions();
 
   useEffect(() => {
     startConnectivityPolling();
@@ -59,31 +54,6 @@ export default function NewSale() {
     setBook(b);
     setPrice(String(b.retailPrice));
     haptics.selection();
-  };
-
-  const openScanner = async () => {
-    setScanMsg("");
-    if (!permission?.granted) {
-      const res = await requestPermission();
-      if (!res.granted) {
-        setScanMsg("Camera permission denied — use manual select below.");
-        return;
-      }
-    }
-    setScanning(true);
-  };
-
-  const onBarcode = ({ data }: { data: string }) => {
-    if (!scanning) return;
-    setScanning(false);
-    const code = data.trim();
-    const match = holdings.find((h) => h.isbn && h.isbn.trim() === code);
-    if (match) {
-      selectBook(match);
-      haptics.success();
-    } else {
-      setScanMsg(`No held stock matches barcode ${code}. Select manually.`);
-    }
   };
 
   const isFree = payment === "free";
@@ -144,38 +114,6 @@ export default function NewSale() {
     ? (parseInt(qty || "0", 10) * numPrice).toFixed(2)
     : "0.00";
 
-  if (scanning) {
-    return (
-      <SafeAreaView edges={["top"]} className="flex-1 bg-black">
-        <StatusBar style="light" />
-        <CameraView
-          style={{ flex: 1 }}
-          facing="back"
-          barcodeScannerSettings={{
-            barcodeTypes: ["ean13", "ean8", "upc_a", "upc_e", "code128", "code39", "qr"],
-          }}
-          onBarcodeScanned={onBarcode}
-        />
-        <View
-          className="absolute top-0 left-0 right-0 flex-row items-center justify-between px-lg"
-          style={{ paddingTop: 48 }}
-        >
-          <Text className="text-white font-semibold">Scan a book barcode</Text>
-          <Pressable
-            onPress={() => setScanning(false)}
-            accessibilityLabel="Cancel scan"
-            className="w-10 h-10 rounded-full bg-black/50 items-center justify-center"
-          >
-            <X size={22} color="#fff" />
-          </Pressable>
-        </View>
-        <View className="absolute inset-0 items-center justify-center" pointerEvents="none">
-          <View className="w-64 h-40 border-2 border-white/80 rounded-xl" />
-        </View>
-      </SafeAreaView>
-    );
-  }
-
   return (
     <SafeAreaView edges={["top"]} className="flex-1 bg-stone-50">
       <StatusBar style="dark" />
@@ -184,14 +122,6 @@ export default function NewSale() {
           <ChevronLeft size={26} color="#292524" />
         </Pressable>
         <Text className="text-stone-900 text-xl font-extrabold flex-1">Log Sale</Text>
-        <Pressable
-          onPress={openScanner}
-          accessibilityLabel="Scan barcode"
-          className="flex-row items-center gap-xs px-md py-sm rounded-full bg-stone-900 active:opacity-80"
-        >
-          <ScanLine size={16} color="#fff" />
-          <Text className="text-white text-sm font-semibold">Scan</Text>
-        </Pressable>
       </View>
 
       <ScrollView
@@ -221,12 +151,6 @@ export default function NewSale() {
             </Text>
           </View>
         )}
-
-        {scanMsg ? (
-          <View className="rounded-xl bg-amber-50 border border-amber-200 p-md mb-md">
-            <Text className="text-amber-800 text-sm">{scanMsg}</Text>
-          </View>
-        ) : null}
 
         <Text className="text-stone-600 text-sm font-medium mb-sm">Select Book</Text>
         {loading ? (

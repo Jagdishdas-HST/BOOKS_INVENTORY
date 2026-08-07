@@ -12,7 +12,6 @@
     "ios": {
       "supportsTablet": false,
       "infoPlist": {
-        "NSCameraUsageDescription": "Camera is used to scan book barcodes when logging a sale.",
         "NSPhotoLibraryUsageDescription": "Photo library access is used to set book cover images."
       }
     },
@@ -22,7 +21,6 @@
         "backgroundColor": "#FFFFFF"
       },
       "permissions": [
-        "android.permission.CAMERA",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.INTERNET",
@@ -34,12 +32,6 @@
       "expo-router",
       "expo-font",
       "expo-web-browser",
-      [
-        "expo-camera",
-        {
-          "cameraPermission": "Camera is used to scan book barcodes when logging a sale."
-        }
-      ],
       [
         "expo-image-picker",
         {
