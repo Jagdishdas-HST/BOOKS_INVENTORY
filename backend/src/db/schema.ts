@@ -40,7 +40,6 @@ export const stockMovements = pgTable("stock_movements", {
   id: serial("id").primaryKey(),
   bookId: integer("book_id").references(() => books.id).notNull(),
   distributorId: integer("distributor_id").references(() => users.id),
-  // For "transfer": distributorId is the SOURCE distributor, toDistributorId is the DESTINATION.
   toDistributorId: integer("to_distributor_id").references(() => users.id),
   quantity: integer("quantity").notNull(),
   type: text("type").$type<"assign" | "return" | "adjust" | "stock_in" | "transfer">().notNull().default("assign"),
@@ -68,6 +67,12 @@ export const sales = pgTable("sales", {
   totalValue: numeric("total_value", { precision: 12, scale: 2 }).notNull(),
   paymentType: text("payment_type").$type<"cash" | "online" | "debt" | "free">().notNull(),
   isDiscounted: boolean("is_discounted").notNull().default(false),
+  // Field-time timestamp: when the distributor actually logged the sale on the
+  // device (may be earlier than createdAt if it was queued offline). Kept
+  // SEPARATE from createdAt (the server sync/receipt time) for the audit trail.
+  clientLoggedAt: timestamp("client_logged_at"),
+  // Device-generated idempotency key so a retried sync never double-inserts.
+  clientId: text("client_id").unique(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -85,6 +90,29 @@ export const paymentAllocations = pgTable("payment_allocations", {
   saleId: integer("sale_id").references(() => sales.id).notNull(),
   amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
   allocatedById: integer("allocated_by_id").references(() => users.id).notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Queued offline sales that FAILED stock re-validation at sync time. Instead of
+// silently forcing negative stock or dropping the sale, we record it here for
+// an Admin/Manager to review. Resolution either "approves" (forces the sale
+// through, allowing negative held stock to be reconciled) or "rejects" (drops
+// the queued sale, acknowledging the loss deliberately).
+export const saleConflicts = pgTable("sale_conflicts", {
+  id: serial("id").primaryKey(),
+  distributorId: integer("distributor_id").references(() => users.id).notNull(),
+  bookId: integer("book_id").references(() => books.id).notNull(),
+  quantity: integer("quantity").notNull(),
+  unitPrice: numeric("unit_price", { precision: 12, scale: 2 }).notNull(),
+  totalValue: numeric("total_value", { precision: 12, scale: 2 }).notNull(),
+  paymentType: text("payment_type").$type<"cash" | "online" | "debt" | "free">().notNull(),
+  isDiscounted: boolean("is_discounted").notNull().default(false),
+  heldAtSync: integer("held_at_sync").notNull(),
+  clientLoggedAt: timestamp("client_logged_at"),
+  clientId: text("client_id").unique(),
+  status: text("status").$type<"pending" | "approved" | "rejected">().notNull().default("pending"),
+  resolvedById: integer("resolved_by_id").references(() => users.id),
+  resolvedAt: timestamp("resolved_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

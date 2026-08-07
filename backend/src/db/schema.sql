@@ -1,11 +1,12 @@
 
+-- Idempotent schema. Runs top-to-bottom on every backend boot.
 CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   username TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL,
-  active BOOLEAN NOT NULL DEFAULT TRUE,
+  active BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -23,7 +24,7 @@ CREATE TABLE IF NOT EXISTS books (
   isbn TEXT,
   cover_url TEXT,
   cover_key TEXT,
-  active BOOLEAN NOT NULL DEFAULT TRUE,
+  active BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -44,6 +45,7 @@ CREATE TABLE IF NOT EXISTS stock_movements (
   moved_by_id INTEGER NOT NULL REFERENCES users(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS to_distributor_id INTEGER REFERENCES users(id);
 
 CREATE TABLE IF NOT EXISTS price_history (
   id SERIAL PRIMARY KEY,
@@ -63,9 +65,13 @@ CREATE TABLE IF NOT EXISTS sales (
   unit_price NUMERIC(12,2) NOT NULL,
   total_value NUMERIC(12,2) NOT NULL,
   payment_type TEXT NOT NULL,
-  is_discounted BOOLEAN NOT NULL DEFAULT FALSE,
+  is_discounted BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Offline sale support (added this turn):
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS client_logged_at TIMESTAMPTZ;
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS client_id TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS sales_client_id_key ON sales (client_id) WHERE client_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS remittances (
   id SERIAL PRIMARY KEY,
@@ -84,6 +90,26 @@ CREATE TABLE IF NOT EXISTS payment_allocations (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Flagged offline sales that failed stock re-validation at sync (added this turn).
+CREATE TABLE IF NOT EXISTS sale_conflicts (
+  id SERIAL PRIMARY KEY,
+  distributor_id INTEGER NOT NULL REFERENCES users(id),
+  book_id INTEGER NOT NULL REFERENCES books(id),
+  quantity INTEGER NOT NULL,
+  unit_price NUMERIC(12,2) NOT NULL,
+  total_value NUMERIC(12,2) NOT NULL,
+  payment_type TEXT NOT NULL,
+  is_discounted BOOLEAN NOT NULL DEFAULT false,
+  held_at_sync INTEGER NOT NULL,
+  client_logged_at TIMESTAMPTZ,
+  client_id TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  resolved_by_id INTEGER REFERENCES users(id),
+  resolved_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sale_conflicts_client_id_key ON sale_conflicts (client_id) WHERE client_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS audit_log (
   id SERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id),
@@ -92,6 +118,3 @@ CREATE TABLE IF NOT EXISTS audit_log (
   details TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
--- v-later: distributor-to-distributor transfer destination.
-ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS to_distributor_id INTEGER REFERENCES users(id);

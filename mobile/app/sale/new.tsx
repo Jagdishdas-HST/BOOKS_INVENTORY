@@ -6,13 +6,16 @@ import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
 import { Image } from "expo-image";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { ChevronLeft, Check, ScanLine, X, Gift } from "lucide-react-native";
+import { ChevronLeft, Check, ScanLine, X, Gift, WifiOff, CloudUpload } from "lucide-react-native";
 import { authFetch } from "@/lib/auth";
 import { Button, Chip, Skeleton } from "@/components/ui";
 import { haptics } from "@/lib/haptics";
+import { useOfflineQueue } from "@/lib/offlineQueue";
+import { API_URL } from "@/constants/api";
 
 export default function NewSale() {
   const router = useRouter();
+  const enqueue = useOfflineQueue((s) => s.enqueue);
   const [holdings, setHoldings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [book, setBook] = useState<any>(null);
@@ -61,17 +64,43 @@ export default function NewSale() {
     if (!q || q < 1) { setError("Enter a valid quantity"); return; }
     if (q > book.quantity) { setError(`You only hold ${book.quantity} copies`); return; }
     setSaving(true);
+
+    const unitPrice = isFree ? 0 : numPrice;
+    const totalValue = isFree ? 0 : q * unitPrice;
+
+    // Check connectivity first. If offline (or the request fails), queue locally
+    // rather than failing the entry.
+    let online = false;
     try {
-      await authFetch("/api/sales", {
-        method: "POST",
-        body: JSON.stringify({
-          bookId: book.bookId, quantity: q,
-          unitPrice: isFree ? 0 : numPrice, paymentType: payment,
-        }),
-      });
-      haptics.success();
-      router.back();
-    } catch (e: any) { setError(e.message); setSaving(false); }
+      const h = await fetch(`${API_URL}/health`);
+      online = h.ok;
+    } catch { online = false; }
+
+    if (online) {
+      try {
+        await authFetch("/api/sales", {
+          method: "POST",
+          body: JSON.stringify({ bookId: book.bookId, quantity: q, unitPrice, paymentType: payment }),
+        });
+        haptics.success();
+        router.back();
+        return;
+      } catch (e: any) {
+        // Fall through to queue on network failure; surface hard errors.
+        if (e?.message && /₹|only hold|stock|Book/i.test(e.message)) {
+          setError(e.message); setSaving(false); return;
+        }
+        online = false;
+      }
+    }
+
+    // Offline path: queue locally with a field-time timestamp.
+    await enqueue({
+      bookId: book.bookId, bookTitle: book.title, quantity: q,
+      unitPrice, paymentType: payment, totalValue,
+    });
+    haptics.success();
+    router.back();
   };
 
   const total = book && !isFree && price ? (parseInt(qty || "0", 10) * numPrice).toFixed(2) : "0.00";
@@ -108,6 +137,11 @@ export default function NewSale() {
       </View>
 
       <ScrollView className="flex-1" contentContainerClassName="px-lg pb-3xl" showsVerticalScrollIndicator={false}>
+        <View className="rounded-xl bg-sky-50 border border-sky-200 p-md mb-md flex-row items-center gap-sm">
+          <WifiOff size={16} color="#0284c7" />
+          <Text className="text-sky-800 text-xs flex-1">If you're offline, this sale is queued on your device and synced automatically when you reconnect.</Text>
+        </View>
+
         {scanMsg ? (
           <View className="rounded-xl bg-amber-50 border border-amber-200 p-md mb-md">
             <Text className="text-amber-800 text-sm">{scanMsg}</Text>

@@ -14,40 +14,69 @@ const CreateSale = z.object({
   bookId: z.coerce.number().int(),
   quantity: z.coerce.number().int().positive(),
   unitPrice: z.coerce.number().nonnegative(),
-  // Fourth option added: "free" for complimentary distribution.
   paymentType: z.enum(["cash", "online", "debt", "free"]),
+  // Offline support: field-time timestamp + device idempotency key. Both
+  // optional so the online path is unchanged. clientLoggedAt is kept distinct
+  // from the server createdAt so the audit trail preserves both times.
+  clientLoggedAt: z.coerce.date().nullable().optional(),
+  clientId: z.string().min(1).max(120).nullable().optional(),
 });
 
 salesRouter.post("/", requireAuth, validateBody(CreateSale), asyncHandler(async (req: AuthedRequest, res) => {
   if (req.user!.role !== "distributor") throw new HttpError(403, "FORBIDDEN", "Only distributors log sales");
-  const { bookId, quantity, paymentType } = req.body;
+  const { bookId, quantity, paymentType, clientLoggedAt, clientId } = req.body;
   const distId = req.user!.id;
-
-  const [ds] = await db.select().from(schema.distributorStock).where(and(eq(schema.distributorStock.distributorId, distId), eq(schema.distributorStock.bookId, bookId)));
-  if (!ds || ds.quantity < quantity) throw new HttpError(400, "INSUFFICIENT_STOCK", `You only hold ${ds?.quantity ?? 0} copies`);
 
   const [book] = await db.select().from(schema.books).where(eq(schema.books.id, bookId));
   if (!book) throw new HttpError(400, "BAD_REQUEST", "Book not found");
 
-  await db.update(schema.distributorStock).set({ quantity: ds.quantity - quantity }).where(eq(schema.distributorStock.id, ds.id));
-
-  // Free distributions reduce stock but carry $0 value and are never a debt.
   const isFree = paymentType === "free";
   const retail = parseFloat(book.retailPrice);
   const unitPrice = isFree ? 0 : req.body.unitPrice;
-  // A discounted paid sale: charged below retail (not free).
   const isDiscounted = !isFree && unitPrice < retail;
   const total = isFree ? 0 : quantity * unitPrice;
+
+  // Idempotency: if this device key already synced (as a sale or a conflict),
+  // return the existing record instead of duplicating. This makes retried
+  // syncs safe.
+  if (clientId) {
+    const [existingSale] = await db.select().from(schema.sales).where(eq(schema.sales.clientId, clientId));
+    if (existingSale) return res.status(200).json({ status: "duplicate", sale: existingSale });
+    const [existingConflict] = await db.select().from(schema.saleConflicts).where(eq(schema.saleConflicts.clientId, clientId));
+    if (existingConflict) return res.status(200).json({ status: "conflict", conflict: existingConflict });
+  }
+
+  const [ds] = await db.select().from(schema.distributorStock).where(and(eq(schema.distributorStock.distributorId, distId), eq(schema.distributorStock.bookId, bookId)));
+  const held = ds?.quantity ?? 0;
+
+  // Re-validate stock at sync/receipt time. If insufficient, DO NOT force
+  // negative stock and DO NOT drop the sale — flag it for manual admin review.
+  if (held < quantity) {
+    const [conflict] = await db.insert(schema.saleConflicts).values({
+      distributorId: distId, bookId, quantity,
+      unitPrice: String(unitPrice), totalValue: String(total),
+      paymentType, isDiscounted, heldAtSync: held,
+      clientLoggedAt: clientLoggedAt ?? null,
+      clientId: clientId ?? null,
+    }).returning();
+    await logAudit(distId, "sale_conflict", "sale", `Queued ${quantity}x ${book.title} exceeds held stock (${held}) — flagged for review`);
+    return res.status(409).json({ status: "conflict", conflict });
+  }
+
+  await db.update(schema.distributorStock).set({ quantity: held - quantity }).where(eq(schema.distributorStock.id, ds!.id));
 
   const [row] = await db.insert(schema.sales).values({
     distributorId: distId, bookId, quantity,
     unitPrice: String(unitPrice), totalValue: String(total),
     paymentType, isDiscounted,
+    clientLoggedAt: clientLoggedAt ?? null,
+    clientId: clientId ?? null,
   }).returning();
 
   const tag = isFree ? "FREE" : isDiscounted ? `${paymentType} discounted` : paymentType;
-  await logAudit(distId, "sale", "sale", `${quantity}x book #${bookId} (${tag}) ₹${total}`);
-  res.status(201).json(row);
+  const offlineNote = clientLoggedAt ? ` (logged offline ${new Date(clientLoggedAt).toISOString()})` : "";
+  await logAudit(distId, "sale", "sale", `${quantity}x book #${bookId} (${tag}) ₹${total}${offlineNote}`);
+  res.status(201).json({ status: "created", sale: row });
 }));
 
 // Sales history (own for distributor, all/by-dist for admin)
@@ -63,6 +92,7 @@ salesRouter.get("/", requireAuth, asyncHandler(async (req: AuthedRequest, res) =
     totalValue: schema.sales.totalValue,
     paymentType: schema.sales.paymentType,
     isDiscounted: schema.sales.isDiscounted,
+    clientLoggedAt: schema.sales.clientLoggedAt,
     createdAt: schema.sales.createdAt,
     bookTitle: schema.books.title,
     sku: schema.books.sku,
@@ -75,9 +105,7 @@ salesRouter.get("/", requireAuth, asyncHandler(async (req: AuthedRequest, res) =
   res.json(rows);
 }));
 
-// Balance summary for a distributor — UNCHANGED default behavior. Free sales
-// (payment_type='free') carry $0 value and never appear in any of these
-// aggregations, so they don't touch outstanding.
+// Balance summary for a distributor.
 salesRouter.get("/balance", requireAuth, asyncHandler(async (req: AuthedRequest, res) => {
   let distId = req.user!.id;
   if (req.user!.role !== "distributor" && req.query.distributorId) {
@@ -117,9 +145,7 @@ salesRouter.get("/balance", requireAuth, asyncHandler(async (req: AuthedRequest,
   });
 }));
 
-// Outstanding (unallocated) debt sales for a distributor — used by the
-// allocation UI. Returns each debt sale with how much of it is still
-// unallocated across all remittances.
+// Outstanding (unallocated) debt sales for a distributor.
 salesRouter.get("/debt-open", requireAuth, asyncHandler(async (req: AuthedRequest, res) => {
   let distId = req.user!.id;
   if (req.user!.role !== "distributor" && req.query.distributorId) {
@@ -135,7 +161,7 @@ salesRouter.get("/debt-open", requireAuth, asyncHandler(async (req: AuthedReques
   }).from(schema.sales)
     .innerJoin(schema.books, eq(schema.sales.bookId, schema.books.id))
     .where(and(eq(schema.sales.distributorId, distId), eq(schema.sales.paymentType, "debt")))
-    .orderBy(schema.sales.createdAt); // oldest first for FIFO
+    .orderBy(schema.sales.createdAt);
 
   const open = rows
     .map((r) => ({
