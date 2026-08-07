@@ -38,7 +38,13 @@ usersRouter.post("/", requireAuth, requireRole("super_admin"), validateBody(Crea
   const [row] = await db.insert(schema.users).values({
     name, username: username.toLowerCase(), passwordHash: hashPassword(password), role,
   }).returning();
-  await logAudit(req.user!.id, "create", "user", `Created ${role} "${name}"`);
+  // Critical audit: new user record — actor, new user name, ID, role, date
+  await logAudit(
+    req.user!.id,
+    "create",
+    "user",
+    `"${req.user!.name}" (ID: ${req.user!.id}) created ${role} "${name}" (new ID: ${row.id}, username: ${row.username})`,
+  );
   res.status(201).json({ id: row.id, name: row.name, username: row.username, role: row.role, active: row.active });
 }));
 
@@ -47,6 +53,12 @@ usersRouter.patch("/:id/active", requireAuth, requireRole("super_admin"), asyncH
   const active = Boolean(req.body?.active);
   const [row] = await db.update(schema.users).set({ active }).where(eq(schema.users.id, id)).returning();
   if (!row) throw new HttpError(404, "NOT_FOUND", "User not found");
-  await logAudit(req.user!.id, active ? "activate" : "deactivate", "user", `${row.name}`);
+  // Critical audit: activation/deactivation — actor, target user, ID, date
+  await logAudit(
+    req.user!.id,
+    active ? "activate" : "deactivate",
+    "user",
+    `"${req.user!.name}" (ID: ${req.user!.id}) ${active ? "activated" : "deactivated"} user "${row.name}" (ID: ${row.id})`,
+  );
   res.json({ id: row.id, active: row.active });
 }));

@@ -15,7 +15,6 @@ booksRouter.get("/", requireAuth, asyncHandler(async (_req, res) => {
   res.json(rows);
 }));
 
-// Lookup by ISBN/barcode for scan-to-select at point of sale.
 booksRouter.get("/lookup/:isbn", requireAuth, asyncHandler(async (req, res) => {
   const isbn = String(req.params.isbn).trim();
   const [row] = await db.select().from(schema.books).where(eq(schema.books.isbn, isbn));
@@ -23,7 +22,6 @@ booksRouter.get("/lookup/:isbn", requireAuth, asyncHandler(async (req, res) => {
   res.json(row);
 }));
 
-// Price change history for a book.
 booksRouter.get("/:id/price-history", requireAuth, requireRole("super_admin", "inventory_manager"), asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   const rows = await db.select({
@@ -65,7 +63,13 @@ booksRouter.post("/", requireAuth, requireRole("super_admin", "inventory_manager
     reorderThreshold: b.reorderThreshold ?? 20,
     isbn: b.isbn ?? null, coverUrl: b.coverUrl ?? null, coverKey: b.coverKey ?? null,
   }).returning();
-  await logAudit(req.user!.id, "create", "book", `${row.title} (${row.sku})`);
+  // Critical audit: new book — actor name, ID, book title, SKU, new record ID
+  await logAudit(
+    req.user!.id,
+    "create",
+    "book",
+    `"${req.user!.name}" (ID: ${req.user!.id}) added book "${row.title}" (SKU: ${row.sku}, ID: ${row.id})`,
+  );
   res.status(201).json(row);
 }));
 
@@ -100,7 +104,7 @@ booksRouter.patch("/:id", requireAuth, requireRole("super_admin", "inventory_man
   if (b.coverKey !== undefined) patch.coverKey = b.coverKey;
   if (b.active !== undefined) patch.active = b.active;
 
-  // Track price changes.
+  // Track price changes with full audit trail
   const priceLogs: { field: "cost_price" | "retail_price"; oldValue: string; newValue: string }[] = [];
   if (b.costPrice !== undefined && Number(current.costPrice) !== b.costPrice) {
     patch.costPrice = String(b.costPrice);
@@ -118,9 +122,21 @@ booksRouter.patch("/:id", requireAuth, requireRole("super_admin", "inventory_man
       bookId: id, field: p.field, oldValue: p.oldValue, newValue: p.newValue, changedById: req.user!.id,
     });
     const label = p.field === "cost_price" ? "cost" : "retail";
-    await logAudit(req.user!.id, "price_change", "book", `${row.title}: ${label} ₹${p.oldValue} → ₹${p.newValue}`);
+    // Critical audit: price change — actor, book title, ID, old→new, date
+    await logAudit(
+      req.user!.id,
+      "price_change",
+      "book",
+      `"${req.user!.name}" (ID: ${req.user!.id}) changed ${label} price of "${row.title}" (ID: ${row.id}): ₹${p.oldValue} → ₹${p.newValue}`,
+    );
   }
 
-  await logAudit(req.user!.id, "update", "book", `${row.title}`);
+  // Critical audit: book update — actor, book title, ID
+  await logAudit(
+    req.user!.id,
+    "update",
+    "book",
+    `"${req.user!.name}" (ID: ${req.user!.id}) updated book "${row.title}" (ID: ${row.id})`,
+  );
   res.json(row);
 }));

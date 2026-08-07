@@ -15,9 +15,6 @@ const CreateSale = z.object({
   quantity: z.coerce.number().int().positive(),
   unitPrice: z.coerce.number().nonnegative(),
   paymentType: z.enum(["cash", "online", "debt", "free"]),
-  // Offline support: field-time timestamp + device idempotency key. Both
-  // optional so the online path is unchanged. clientLoggedAt is kept distinct
-  // from the server createdAt so the audit trail preserves both times.
   clientLoggedAt: z.coerce.date().nullable().optional(),
   clientId: z.string().min(1).max(120).nullable().optional(),
 });
@@ -36,9 +33,6 @@ salesRouter.post("/", requireAuth, validateBody(CreateSale), asyncHandler(async 
   const isDiscounted = !isFree && unitPrice < retail;
   const total = isFree ? 0 : quantity * unitPrice;
 
-  // Idempotency: if this device key already synced (as a sale or a conflict),
-  // return the existing record instead of duplicating. This makes retried
-  // syncs safe.
   if (clientId) {
     const [existingSale] = await db.select().from(schema.sales).where(eq(schema.sales.clientId, clientId));
     if (existingSale) return res.status(200).json({ status: "duplicate", sale: existingSale });
@@ -49,8 +43,6 @@ salesRouter.post("/", requireAuth, validateBody(CreateSale), asyncHandler(async 
   const [ds] = await db.select().from(schema.distributorStock).where(and(eq(schema.distributorStock.distributorId, distId), eq(schema.distributorStock.bookId, bookId)));
   const held = ds?.quantity ?? 0;
 
-  // Re-validate stock at sync/receipt time. If insufficient, DO NOT force
-  // negative stock and DO NOT drop the sale — flag it for manual admin review.
   if (held < quantity) {
     const [conflict] = await db.insert(schema.saleConflicts).values({
       distributorId: distId, bookId, quantity,
@@ -59,7 +51,13 @@ salesRouter.post("/", requireAuth, validateBody(CreateSale), asyncHandler(async 
       clientLoggedAt: clientLoggedAt ?? null,
       clientId: clientId ?? null,
     }).returning();
-    await logAudit(distId, "sale_conflict", "sale", `Queued ${quantity}x ${book.title} exceeds held stock (${held}) — flagged for review`);
+    // Critical audit: sale conflict — actor, quantity, book+ID, held stock
+    await logAudit(
+      distId,
+      "sale_conflict",
+      "sale",
+      `"${req.user!.name}" (ID: ${distId}) attempted ${quantity}x "${book.title}" (ID: ${book.id}) but only held ${held} — flagged conflict #${conflict.id}`,
+    );
     return res.status(409).json({ status: "conflict", conflict });
   }
 
@@ -75,11 +73,16 @@ salesRouter.post("/", requireAuth, validateBody(CreateSale), asyncHandler(async 
 
   const tag = isFree ? "FREE" : isDiscounted ? `${paymentType} discounted` : paymentType;
   const offlineNote = clientLoggedAt ? ` (logged offline ${new Date(clientLoggedAt).toISOString()})` : "";
-  await logAudit(distId, "sale", "sale", `${quantity}x book #${bookId} (${tag}) ₹${total}${offlineNote}`);
+  // Critical audit: sale — actor name+ID, quantity, book title+ID, payment type, total, date
+  await logAudit(
+    distId,
+    "sale",
+    "sale",
+    `"${req.user!.name}" (ID: ${distId}) sold ${quantity}x "${book.title}" (ID: ${book.id}) [${tag}] ₹${total} — Sale #${row.id}${offlineNote}`,
+  );
   res.status(201).json({ status: "created", sale: row });
 }));
 
-// Sales history (own for distributor, all/by-dist for admin)
 salesRouter.get("/", requireAuth, asyncHandler(async (req: AuthedRequest, res) => {
   let distId = req.user!.id;
   if (req.user!.role !== "distributor" && req.query.distributorId) {
@@ -105,7 +108,6 @@ salesRouter.get("/", requireAuth, asyncHandler(async (req: AuthedRequest, res) =
   res.json(rows);
 }));
 
-// Balance summary for a distributor.
 salesRouter.get("/balance", requireAuth, asyncHandler(async (req: AuthedRequest, res) => {
   let distId = req.user!.id;
   if (req.user!.role !== "distributor" && req.query.distributorId) {
@@ -145,7 +147,6 @@ salesRouter.get("/balance", requireAuth, asyncHandler(async (req: AuthedRequest,
   });
 }));
 
-// Outstanding (unallocated) debt sales for a distributor.
 salesRouter.get("/debt-open", requireAuth, asyncHandler(async (req: AuthedRequest, res) => {
   let distId = req.user!.id;
   if (req.user!.role !== "distributor" && req.query.distributorId) {

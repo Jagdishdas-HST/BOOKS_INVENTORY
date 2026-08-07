@@ -26,16 +26,11 @@ stockRouter.post("/assign", requireAuth, requireRole("super_admin", "inventory_m
   if (!dist) throw new HttpError(404, "NOT_FOUND", "Distributor not found");
   if (!dist.active) throw new HttpError(400, "INACTIVE", "Distributor is deactivated");
 
-  // Guarded conditional UPDATE: only decrements when enough stock is present.
-  // This closes the concurrent-assignment race — two Managers assigning the
-  // same book at once can never drive warehouse stock below zero, because the
-  // decrement is atomic against the current value in the row.
   const decremented = await db.update(schema.books)
     .set({ warehouseStock: sql`${schema.books.warehouseStock} - ${quantity}` })
     .where(and(eq(schema.books.id, bookId), sql`${schema.books.warehouseStock} >= ${quantity}`))
     .returning({ id: schema.books.id });
   if (decremented.length === 0) {
-    // Re-read for an accurate message.
     const [fresh] = await db.select().from(schema.books).where(eq(schema.books.id, bookId));
     throw new HttpError(400, "INSUFFICIENT_STOCK", `Only ${fresh?.warehouseStock ?? 0} in warehouse`);
   }
@@ -48,11 +43,17 @@ stockRouter.post("/assign", requireAuth, requireRole("super_admin", "inventory_m
   }
 
   await db.insert(schema.stockMovements).values({ bookId, distributorId, quantity, type: "assign", movedById: req.user!.id });
-  await logAudit(req.user!.id, "assign", "stock", `${quantity}x ${book.title} → ${dist.name}`);
+  // Critical audit: stock assignment — actor, quantity, book title+ID, distributor name+ID
+  await logAudit(
+    req.user!.id,
+    "assign",
+    "stock",
+    `"${req.user!.name}" (ID: ${req.user!.id}) assigned +${quantity}x "${book.title}" (ID: ${book.id}) → "${dist.name}" (ID: ${dist.id})`,
+  );
   res.status(201).json({ ok: true });
 }));
 
-// Distributor -> Distributor transfer (does NOT route through warehouse).
+// Distributor -> Distributor transfer
 const Transfer = z.object({
   bookId: z.coerce.number().int(),
   fromDistributorId: z.coerce.number().int(),
@@ -76,7 +77,6 @@ stockRouter.post("/transfer", requireAuth, requireRole("super_admin", "inventory
   const [fromDs] = await db.select().from(schema.distributorStock).where(and(eq(schema.distributorStock.distributorId, fromDistributorId), eq(schema.distributorStock.bookId, bookId)));
   if (!fromDs || fromDs.quantity < quantity) throw new HttpError(400, "INSUFFICIENT_STOCK", `${fromDist.name} only holds ${fromDs?.quantity ?? 0}`);
 
-  // Guarded decrement on the source holding (atomic against concurrent moves).
   const decremented = await db.update(schema.distributorStock)
     .set({ quantity: sql`${schema.distributorStock.quantity} - ${quantity}` })
     .where(and(eq(schema.distributorStock.id, fromDs.id), sql`${schema.distributorStock.quantity} >= ${quantity}`))
@@ -86,7 +86,6 @@ stockRouter.post("/transfer", requireAuth, requireRole("super_admin", "inventory
     throw new HttpError(400, "INSUFFICIENT_STOCK", `${fromDist.name} only holds ${fresh?.quantity ?? 0}`);
   }
 
-  // Increase destination.
   const [toDs] = await db.select().from(schema.distributorStock).where(and(eq(schema.distributorStock.distributorId, toDistributorId), eq(schema.distributorStock.bookId, bookId)));
   if (toDs) {
     await db.update(schema.distributorStock).set({ quantity: toDs.quantity + quantity }).where(eq(schema.distributorStock.id, toDs.id));
@@ -97,11 +96,17 @@ stockRouter.post("/transfer", requireAuth, requireRole("super_admin", "inventory
   await db.insert(schema.stockMovements).values({
     bookId, distributorId: fromDistributorId, toDistributorId, quantity, type: "transfer", reason: reason ?? null, movedById: req.user!.id,
   });
-  await logAudit(req.user!.id, "transfer", "stock", `${quantity}x ${book.title}: ${fromDist.name} → ${toDist.name}${reason ? ` (${reason})` : ""}`);
+  // Critical audit: transfer — actor, quantity, book+ID, from→to with IDs
+  await logAudit(
+    req.user!.id,
+    "transfer",
+    "stock",
+    `"${req.user!.name}" (ID: ${req.user!.id}) transferred ${quantity}x "${book.title}" (ID: ${book.id}): "${fromDist.name}" (ID: ${fromDist.id}) → "${toDist.name}" (ID: ${toDist.id})${reason ? ` [${reason}]` : ""}`,
+  );
   res.status(201).json({ ok: true });
 }));
 
-// Bulk stock intake (new print run received into warehouse)
+// Bulk stock intake
 const Intake = z.object({
   bookId: z.coerce.number().int(),
   quantity: z.coerce.number().int().positive(),
@@ -118,11 +123,17 @@ stockRouter.post("/intake", requireAuth, requireRole("super_admin", "inventory_m
   await db.insert(schema.stockMovements).values({
     bookId, distributorId: null, quantity, type: "stock_in", reason: reference ?? null, movedById: req.user!.id,
   });
-  await logAudit(req.user!.id, "stock_in", "stock", `+${quantity}x ${book.title} received${reference ? ` (ref: ${reference})` : ""}`);
+  // Critical audit: stock intake — actor, quantity added, book+ID, reference
+  await logAudit(
+    req.user!.id,
+    "stock_in",
+    "stock",
+    `"${req.user!.name}" (ID: ${req.user!.id}) received +${quantity}x "${book.title}" (ID: ${book.id})${reference ? ` (ref: ${reference})` : ""}`,
+  );
   res.status(201).json({ ok: true });
 }));
 
-// Return distributor -> warehouse (with damaged write-off routing)
+// Return distributor -> warehouse
 const Return = z.object({
   bookId: z.coerce.number().int(),
   distributorId: z.coerce.number().int(),
@@ -140,8 +151,6 @@ stockRouter.post("/return", requireAuth, requireRole("super_admin", "inventory_m
   const [ds] = await db.select().from(schema.distributorStock).where(and(eq(schema.distributorStock.distributorId, distributorId), eq(schema.distributorStock.bookId, bookId)));
   if (!ds || ds.quantity < quantity) throw new HttpError(400, "INSUFFICIENT_STOCK", `Distributor only holds ${ds?.quantity ?? 0}`);
 
-  // Guarded decrement so a return can never take held stock below the amount
-  // actually held (protects against concurrent returns of the same holding).
   const decremented = await db.update(schema.distributorStock)
     .set({ quantity: sql`${schema.distributorStock.quantity} - ${quantity}` })
     .where(and(eq(schema.distributorStock.id, ds.id), sql`${schema.distributorStock.quantity} >= ${quantity}`))
@@ -158,17 +167,17 @@ stockRouter.post("/return", requireAuth, requireRole("super_admin", "inventory_m
   }
 
   await db.insert(schema.stockMovements).values({ bookId, distributorId, quantity, type: "return", reason, movedById: req.user!.id });
-  await logAudit(req.user!.id, "return", "stock", `${quantity}x ${book.title} ← ${dist.name} (${reason})`);
+  // Critical audit: return — actor, quantity, book+ID, distributor+ID, reason
+  await logAudit(
+    req.user!.id,
+    "return",
+    "stock",
+    `"${req.user!.name}" (ID: ${req.user!.id}) returned ${quantity}x "${book.title}" (ID: ${book.id}) ← "${dist.name}" (ID: ${dist.id}) [${reason}]`,
+  );
   res.status(201).json({ ok: true });
 }));
 
-// Reconciliation adjustment.
-//   - Warehouse scope (distributorId null/absent): sets warehouse stock to the
-//     physical count.
-//   - Distributor scope (distributorId present): sets THAT distributor's held
-//     quantity for the book to the physical count. Previously this was ignored
-//     and a per-distributor count silently overwrote WAREHOUSE stock — a real
-//     data-integrity bug. Now it adjusts the correct holding.
+// Reconciliation adjustment
 const Reconcile = z.object({
   bookId: z.coerce.number().int(),
   distributorId: z.coerce.number().int().nullable().optional(),
@@ -196,7 +205,12 @@ stockRouter.post("/reconcile", requireAuth, requireRole("super_admin", "inventor
     }
 
     await db.insert(schema.stockMovements).values({ bookId, distributorId, quantity: diff, type: "adjust", reason: note ?? null, movedById: req.user!.id });
-    await logAudit(req.user!.id, "adjust", "stock", `${book.title} @ ${dist.name}: ${oldCount} → ${physicalCount}${note ? ` (${note})` : ""}`);
+    await logAudit(
+      req.user!.id,
+      "adjust",
+      "stock",
+      `"${req.user!.name}" (ID: ${req.user!.id}) reconciled "${book.title}" (ID: ${book.id}) @ "${dist.name}" (ID: ${dist.id}): ${oldCount} → ${physicalCount}${note ? ` [${note}]` : ""}`,
+    );
     res.status(201).json({ ok: true });
     return;
   }
@@ -206,18 +220,23 @@ stockRouter.post("/reconcile", requireAuth, requireRole("super_admin", "inventor
 
   await db.update(schema.books).set({ warehouseStock: physicalCount }).where(eq(schema.books.id, bookId));
   await db.insert(schema.stockMovements).values({ bookId, distributorId: null, quantity: diff, type: "adjust", reason: note ?? null, movedById: req.user!.id });
-  await logAudit(req.user!.id, "adjust", "stock", `${book.title} (warehouse): ${oldCount} → ${physicalCount}${note ? ` (${note})` : ""}`);
+  await logAudit(
+    req.user!.id,
+    "adjust",
+    "stock",
+    `"${req.user!.name}" (ID: ${req.user!.id}) reconciled "${book.title}" (ID: ${book.id}) warehouse: ${oldCount} → ${physicalCount}${note ? ` [${note}]` : ""}`,
+  );
   res.status(201).json({ ok: true });
 }));
 
-// Low stock books (at or below threshold)
+// Low stock books
 stockRouter.get("/low-stock", requireAuth, requireRole("super_admin", "inventory_manager"), asyncHandler(async (_req, res) => {
   const all = await db.select().from(schema.books).where(eq(schema.books.active, true));
   const low = all.filter((b) => b.warehouseStock <= b.reorderThreshold);
   res.json(low);
 }));
 
-// Distributor stock (own for distributor, or by ?distributorId for admin/manager)
+// Distributor stock holdings
 stockRouter.get("/holdings", requireAuth, asyncHandler(async (req: AuthedRequest, res) => {
   let distId = req.user!.id;
   if (req.user!.role !== "distributor" && req.query.distributorId) {
@@ -259,7 +278,6 @@ stockRouter.get("/movements", requireAuth, requireRole("super_admin", "inventory
     .orderBy(desc(schema.stockMovements.createdAt))
     .limit(100);
 
-  // Resolve destination distributor names for transfers.
   const toIds = Array.from(new Set(rows.map((r) => r.toDistributorId).filter((x): x is number => !!x)));
   let toNames: Record<number, string> = {};
   if (toIds.length > 0) {

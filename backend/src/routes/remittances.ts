@@ -18,17 +18,12 @@ const AllocationInput = z.object({
 const CreateRemit = z.object({
   amount: z.coerce.number().positive(),
   note: z.string().max(300).nullable().optional(),
-  // OPTIONAL allocations. When omitted, the remittance simply hits the flat
-  // running balance (unchanged default behavior). Only present when an admin
-  // deliberately allocates against specific debt sales.
   allocations: z.array(AllocationInput).nullable().optional(),
 });
 
 remittancesRouter.post("/", requireAuth, validateBody(CreateRemit), asyncHandler(async (req: AuthedRequest, res) => {
   const { amount, note, allocations } = req.body;
 
-  // Distributors log their own remittances (flat balance, no allocation).
-  // Admins/Managers may log for a distributor and optionally allocate.
   let distId: number;
   if (req.user!.role === "distributor") {
     distId = req.user!.id;
@@ -52,7 +47,6 @@ remittancesRouter.post("/", requireAuth, validateBody(CreateRemit), asyncHandler
       throw new HttpError(400, "BAD_REQUEST", "Allocations exceed the remittance amount");
     }
     for (const a of allocations) {
-      // Validate the sale is a debt sale belonging to this distributor.
       const [sale] = await db.select().from(schema.sales).where(eq(schema.sales.id, a.saleId));
       if (!sale || sale.distributorId !== distId || sale.paymentType !== "debt") {
         throw new HttpError(400, "BAD_REQUEST", `Sale #${a.saleId} is not an eligible debt sale`);
@@ -61,9 +55,21 @@ remittancesRouter.post("/", requireAuth, validateBody(CreateRemit), asyncHandler
         remittanceId: row.id, saleId: a.saleId, amount: String(a.amount), allocatedById: req.user!.id,
       });
     }
-    await logAudit(req.user!.id, "remittance_allocated", "remittance", `₹${amount} allocated across ${allocations.length} debt sale(s) for dist #${distId}`);
+    // Critical audit: allocated remittance — actor, amount, distributor ID, sale count
+    await logAudit(
+      req.user!.id,
+      "remittance_allocated",
+      "remittance",
+      `"${req.user!.name}" (ID: ${req.user!.id}) recorded Remittance #${row.id}: ₹${amount} allocated across ${allocations.length} debt sale(s) for distributor ID: ${distId}`,
+    );
   } else {
-    await logAudit(req.user!.id, "remittance", "remittance", `₹${amount}${note ? ` — ${note}` : ""} (dist #${distId})`);
+    // Critical audit: remittance — actor, amount, note, distributor ID
+    await logAudit(
+      req.user!.id,
+      "remittance",
+      "remittance",
+      `"${req.user!.name}" (ID: ${req.user!.id}) recorded Remittance #${row.id}: ₹${amount}${note ? ` — ${note}` : ""} (distributor ID: ${distId})`,
+    );
   }
 
   res.status(201).json(row);
@@ -81,7 +87,6 @@ remittancesRouter.get("/", requireAuth, asyncHandler(async (req: AuthedRequest, 
   res.json(rows);
 }));
 
-// Allocations for a given remittance (used to display "what this payment covered").
 remittancesRouter.get("/:id/allocations", requireAuth, asyncHandler(async (req: AuthedRequest, res) => {
   const remitId = Number(req.params.id);
   const rows = await db.select({

@@ -1,619 +1,495 @@
 
 import { useEffect, useState, useCallback } from "react";
 import {
-  View,
-  Text,
-  ScrollView,
-  Pressable,
-  ActivityIndicator,
-  RefreshControl,
+  View, Text, ScrollView, Pressable, TextInput, RefreshControl, Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import {
-  CheckCircle,
-  XCircle,
-  AlertTriangle,
-  Info,
-  Database,
-  Shield,
-  Clock,
-  Settings,
-  FileText,
-  ChevronDown,
-  ChevronRight,
-  RefreshCw,
-  Copy,
-} from "lucide-react-native";
 import { useRouter } from "expo-router";
-import { API_URL } from "@/constants/api";
-import { getToken } from "@/lib/auth";
+import {
+  ChevronLeft, Search, Filter, X, Shield, User, BookOpen,
+  Package, ShoppingCart, Banknote, TrendingUp, Settings,
+  LogIn, ChevronDown, ChevronRight, AlertTriangle, RefreshCw,
+  Calendar, Clock,
+} from "lucide-react-native";
+import { format } from "date-fns";
+import { authFetch } from "@/lib/auth";
+import { useAuth } from "@/lib/auth";
 
-// ─── types ───────────────────────────────────────────────────────────────────
+type AuditRow = {
+  id: number;
+  action: string;
+  entity: string;
+  details: string | null;
+  createdAt: string;
+  userId: number;
+  userName: string;
+  userRole: string;
+  userUsername: string;
+};
 
-type Severity = "error" | "warning" | "info";
-type CheckStatus = "pass" | "fail" | "warn";
+type Facets = {
+  actions: string[];
+  entities: string[];
+  users: { id: number; name: string; role: string }[];
+};
 
-interface Issue {
-  severity: Severity;
-  category: string;
-  message: string;
-  fix?: string;
-}
+const ACTION_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  create:               { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200" },
+  update:               { bg: "bg-blue-50",    text: "text-blue-700",    border: "border-blue-200" },
+  delete:               { bg: "bg-rose-50",    text: "text-rose-700",    border: "border-rose-200" },
+  assign:               { bg: "bg-amber-50",   text: "text-amber-700",   border: "border-amber-200" },
+  return:               { bg: "bg-orange-50",  text: "text-orange-700",  border: "border-orange-200" },
+  transfer:             { bg: "bg-purple-50",  text: "text-purple-700",  border: "border-purple-200" },
+  stock_in:             { bg: "bg-teal-50",    text: "text-teal-700",    border: "border-teal-200" },
+  adjust:               { bg: "bg-slate-50",   text: "text-slate-700",   border: "border-slate-200" },
+  sale:                 { bg: "bg-indigo-50",  text: "text-indigo-700",  border: "border-indigo-200" },
+  sale_conflict:        { bg: "bg-rose-50",    text: "text-rose-700",    border: "border-rose-200" },
+  remittance:           { bg: "bg-green-50",   text: "text-green-700",   border: "border-green-200" },
+  remittance_allocated: { bg: "bg-green-50",   text: "text-green-700",   border: "border-green-200" },
+  price_change:         { bg: "bg-yellow-50",  text: "text-yellow-700",  border: "border-yellow-200" },
+  activate:             { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200" },
+  deactivate:           { bg: "bg-rose-50",    text: "text-rose-700",    border: "border-rose-200" },
+  login:                { bg: "bg-sky-50",     text: "text-sky-700",     border: "border-sky-200" },
+};
 
-interface ChecklistItem {
-  item: string;
-  status: CheckStatus;
-  detail: string;
-}
+const ENTITY_ICONS: Record<string, React.ReactNode> = {
+  book:       <BookOpen size={13} color="#64748b" />,
+  user:       <User size={13} color="#64748b" />,
+  stock:      <Package size={13} color="#64748b" />,
+  sale:       <ShoppingCart size={13} color="#64748b" />,
+  remittance: <Banknote size={13} color="#64748b" />,
+  auth:       <LogIn size={13} color="#64748b" />,
+};
 
-interface AuditReport {
-  generatedAt: string;
-  readiness: {
-    score: "ready" | "minor-fixes-needed" | "blockers-present";
-    errorCount: number;
-    warningCount: number;
-    infoCount: number;
-    summary: string;
-  };
-  sections: {
-    schemaPortability: {
-      tables: string[];
-      tableCount: number;
-      extensions: { name: string; version: string; safe: boolean }[];
-      exoticExtensions: string[];
-      serialColumns: string[];
-      foreignKeyCount: number;
-      indexCount: number;
-    };
-    configuration: Record<string, { present: boolean; isEnvVar: boolean; note: string }>;
-    timestamps: {
-      totalTimestampColumns: number;
-      withTimezone: number;
-      withoutTimezone: number;
-      localTimestampColumns: string[];
-      assessment: string;
-    };
-    rowLevelSecurity: {
-      currentlyEnabled: string[];
-      currentlyDisabled: string[];
-      enforcementLayer: string;
-      enforcementDetail: string;
-      roleMapping: Record<string, { description: string; suggestedPolicy: string; tables: string[] }>;
-      rlsMigrationPath: string[];
-    };
-    ddlExport: {
-      description: string;
-      sql: string;
-    };
-    issues: Issue[];
-  };
-  migrationChecklist: ChecklistItem[];
-}
+const ROLE_BADGE: Record<string, { bg: string; text: string; label: string }> = {
+  super_admin:       { bg: "bg-amber-100",   text: "text-amber-800",  label: "Admin" },
+  inventory_manager: { bg: "bg-blue-100",    text: "text-blue-800",   label: "Manager" },
+  distributor:       { bg: "bg-slate-100",   text: "text-slate-700",  label: "Distributor" },
+};
 
-// ─── helpers ─────────────────────────────────────────────────────────────────
-
-function severityColor(s: Severity) {
-  if (s === "error") return { bg: "bg-rose-900/40", border: "border-rose-700", text: "text-rose-300", icon: "rose" };
-  if (s === "warning") return { bg: "bg-amber-900/40", border: "border-amber-700", text: "text-amber-300", icon: "amber" };
-  return { bg: "bg-sky-900/40", border: "border-sky-700", text: "text-sky-300", icon: "sky" };
-}
-
-function statusColor(s: CheckStatus) {
-  if (s === "pass") return { text: "text-emerald-400", icon: "emerald" };
-  if (s === "fail") return { text: "text-rose-400", icon: "rose" };
-  return { text: "text-amber-400", icon: "amber" };
-}
-
-function readinessColors(score: AuditReport["readiness"]["score"]) {
-  if (score === "ready") return { bg: "bg-emerald-900/50", border: "border-emerald-600", badge: "bg-emerald-600", text: "MIGRATION READY" };
-  if (score === "minor-fixes-needed") return { bg: "bg-amber-900/50", border: "border-amber-600", badge: "bg-amber-600", text: "MINOR FIXES NEEDED" };
-  return { bg: "bg-rose-900/50", border: "border-rose-600", badge: "bg-rose-600", text: "BLOCKERS PRESENT" };
-}
-
-// ─── sub-components ──────────────────────────────────────────────────────────
-
-function SectionHeader({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle?: string }) {
+function ActionBadge({ action }: { action: string }) {
+  const c = ACTION_COLORS[action] ?? { bg: "bg-slate-50", text: "text-slate-600", border: "border-slate-200" };
+  const label = action.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase());
   return (
-    <View className="flex-row items-center gap-3 mb-3">
-      <View className="w-8 h-8 rounded-lg bg-indigo-900/60 items-center justify-center">
-        {icon}
-      </View>
-      <View className="flex-1">
-        <Text className="text-zinc-100 font-bold text-base">{title}</Text>
-        {subtitle && <Text className="text-zinc-500 text-xs mt-0.5">{subtitle}</Text>}
-      </View>
+    <View className={`self-start rounded-full border px-2 py-0.5 ${c.bg} ${c.border}`}>
+      <Text className={`text-[10px] font-bold uppercase tracking-wide ${c.text}`}>{label}</Text>
     </View>
   );
 }
 
-function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+function RoleBadge({ role }: { role: string }) {
+  const b = ROLE_BADGE[role] ?? { bg: "bg-slate-100", text: "text-slate-600", label: role };
   return (
-    <View className={`rounded-xl border border-zinc-800 bg-zinc-900 p-4 mb-3 ${className}`}>
-      {children}
+    <View className={`self-start rounded-full px-2 py-0.5 ${b.bg}`}>
+      <Text className={`text-[10px] font-semibold ${b.text}`}>{b.label}</Text>
     </View>
   );
 }
 
-function IssueRow({ issue }: { issue: Issue }) {
+function AuditCard({ row }: { row: AuditRow }) {
   const [expanded, setExpanded] = useState(false);
-  const colors = severityColor(issue.severity);
-  const SeverityIcon = issue.severity === "error" ? XCircle : issue.severity === "warning" ? AlertTriangle : Info;
+  const date = new Date(row.createdAt);
 
   return (
     <Pressable
-      onPress={() => setExpanded((v) => !v)}
-      className={`rounded-lg border ${colors.border} ${colors.bg} p-3 mb-2`}
-      accessibilityLabel={`Issue: ${issue.message}`}
+      onPress={() => setExpanded(v => !v)}
+      accessibilityLabel={`Audit entry: ${row.action} on ${row.entity}`}
+      className="bg-white rounded-2xl border border-slate-100 mb-2 overflow-hidden active:opacity-90"
+      style={{ shadowColor: "#000", shadowOpacity: 0.03, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 }}
     >
-      <View className="flex-row items-start gap-2">
-        <SeverityIcon size={15} color={issue.severity === "error" ? "#f87171" : issue.severity === "warning" ? "#fbbf24" : "#38bdf8"} />
+      {/* Main row */}
+      <View className="flex-row items-start p-md gap-sm">
+        {/* Entity icon */}
+        <View className="w-9 h-9 rounded-xl bg-slate-50 border border-slate-100 items-center justify-center mt-xs">
+          {ENTITY_ICONS[row.entity] ?? <Settings size={13} color="#64748b" />}
+        </View>
+
         <View className="flex-1">
-          <Text className={`${colors.text} text-xs font-semibold uppercase tracking-wider mb-0.5`}>
-            {issue.category}
-          </Text>
-          <Text className="text-zinc-200 text-sm leading-5">{issue.message}</Text>
-          {expanded && issue.fix && (
-            <View className="mt-2 pt-2 border-t border-zinc-700">
-              <Text className="text-zinc-400 text-xs font-semibold mb-1">RECOMMENDED FIX</Text>
-              <Text className="text-zinc-300 text-xs leading-4">{issue.fix}</Text>
+          {/* Action + entity */}
+          <View className="flex-row items-center gap-xs flex-wrap mb-xs">
+            <ActionBadge action={row.action} />
+            <Text className="text-slate-400 text-[10px] font-medium uppercase tracking-wide">{row.entity}</Text>
+          </View>
+
+          {/* Details preview */}
+          {row.details ? (
+            <Text
+              className="text-slate-700 text-sm leading-5"
+              numberOfLines={expanded ? undefined : 2}
+            >
+              {row.details}
+            </Text>
+          ) : (
+            <Text className="text-slate-400 text-sm italic">No details recorded</Text>
+          )}
+
+          {/* Actor + timestamp */}
+          <View className="flex-row items-center gap-sm mt-sm flex-wrap">
+            <View className="flex-row items-center gap-xs">
+              <View className="w-5 h-5 rounded-full bg-amber-100 items-center justify-center">
+                <Text className="text-amber-700 text-[9px] font-bold">{row.userName[0]}</Text>
+              </View>
+              <Text className="text-slate-600 text-xs font-semibold">{row.userName}</Text>
+              <RoleBadge role={row.userRole} />
+            </View>
+            <View className="flex-row items-center gap-xs">
+              <Clock size={11} color="#94a3b8" />
+              <Text className="text-slate-400 text-xs">
+                {format(date, "d MMM yyyy, HH:mm")}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Expand chevron */}
+        <View className="mt-xs">
+          {expanded
+            ? <ChevronDown size={14} color="#94a3b8" />
+            : <ChevronRight size={14} color="#94a3b8" />}
+        </View>
+      </View>
+
+      {/* Expanded: full details + metadata */}
+      {expanded && (
+        <View className="border-t border-slate-100 bg-slate-50 px-md py-sm">
+          <View className="flex-row gap-lg flex-wrap">
+            <View>
+              <Text className="text-slate-400 text-[10px] font-bold uppercase tracking-wider mb-xs">Record ID</Text>
+              <Text className="text-slate-700 text-xs font-mono">#{row.id}</Text>
+            </View>
+            <View>
+              <Text className="text-slate-400 text-[10px] font-bold uppercase tracking-wider mb-xs">Actor ID</Text>
+              <Text className="text-slate-700 text-xs font-mono">#{row.userId}</Text>
+            </View>
+            <View>
+              <Text className="text-slate-400 text-[10px] font-bold uppercase tracking-wider mb-xs">Username</Text>
+              <Text className="text-slate-700 text-xs font-mono">@{row.userUsername}</Text>
+            </View>
+            <View>
+              <Text className="text-slate-400 text-[10px] font-bold uppercase tracking-wider mb-xs">Timestamp</Text>
+              <Text className="text-slate-700 text-xs font-mono">{date.toISOString()}</Text>
+            </View>
+          </View>
+          {row.details && (
+            <View className="mt-sm">
+              <Text className="text-slate-400 text-[10px] font-bold uppercase tracking-wider mb-xs">Full Details</Text>
+              <Text className="text-slate-700 text-xs leading-4">{row.details}</Text>
             </View>
           )}
         </View>
-        {issue.fix && (
-          expanded
-            ? <ChevronDown size={14} color="#71717a" />
-            : <ChevronRight size={14} color="#71717a" />
-        )}
-      </View>
-    </Pressable>
-  );
-}
-
-function ChecklistRow({ item }: { item: ChecklistItem }) {
-  const [expanded, setExpanded] = useState(false);
-  const colors = statusColor(item.status);
-  const Icon = item.status === "pass" ? CheckCircle : item.status === "fail" ? XCircle : AlertTriangle;
-
-  return (
-    <Pressable
-      onPress={() => setExpanded((v) => !v)}
-      className="flex-row items-start gap-3 py-2.5 border-b border-zinc-800"
-      accessibilityLabel={`Checklist: ${item.item}`}
-    >
-      <Icon size={16} color={item.status === "pass" ? "#34d399" : item.status === "fail" ? "#f87171" : "#fbbf24"} />
-      <View className="flex-1">
-        <Text className="text-zinc-200 text-sm">{item.item}</Text>
-        {expanded && (
-          <Text className="text-zinc-400 text-xs mt-1 leading-4">{item.detail}</Text>
-        )}
-      </View>
-      <ChevronRight size={13} color="#52525b" />
-    </Pressable>
-  );
-}
-
-function CollapsibleSection({
-  title,
-  icon,
-  children,
-  defaultOpen = false,
-}: {
-  title: string;
-  icon: React.ReactNode;
-  children: React.ReactNode;
-  defaultOpen?: boolean;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <View className="mb-3">
-      <Pressable
-        onPress={() => setOpen((v) => !v)}
-        className="flex-row items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3"
-        accessibilityLabel={`Toggle section: ${title}`}
-      >
-        <View className="w-7 h-7 rounded-lg bg-indigo-900/60 items-center justify-center">
-          {icon}
-        </View>
-        <Text className="flex-1 text-zinc-100 font-semibold text-sm">{title}</Text>
-        {open ? <ChevronDown size={16} color="#71717a" /> : <ChevronRight size={16} color="#71717a" />}
-      </Pressable>
-      {open && (
-        <View className="border border-t-0 border-zinc-800 rounded-b-xl bg-zinc-950 px-4 pt-3 pb-4">
-          {children}
-        </View>
       )}
-    </View>
+    </Pressable>
   );
 }
 
-// ─── main screen ─────────────────────────────────────────────────────────────
+function FilterSheet({
+  visible, onClose, facets, filters, onApply,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  facets: Facets | null;
+  filters: { action: string; entity: string; userId: string };
+  onApply: (f: { action: string; entity: string; userId: string }) => void;
+}) {
+  const [local, setLocal] = useState(filters);
+
+  useEffect(() => { setLocal(filters); }, [filters, visible]);
+
+  const Chip = ({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) => (
+    <Pressable
+      onPress={onPress}
+      className={`self-start rounded-full border px-md py-xs mr-sm mb-sm ${active ? "bg-amber-500 border-amber-500" : "bg-white border-slate-200"}`}
+    >
+      <Text className={`text-xs font-semibold ${active ? "text-white" : "text-slate-600"}`}>{label}</Text>
+    </Pressable>
+  );
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable className="flex-1 bg-black/40 justify-end" onPress={onClose}>
+        <Pressable onPress={e => e.stopPropagation()} className="bg-white rounded-t-3xl">
+          <View className="items-center pt-md pb-sm">
+            <View className="w-10 h-1 rounded-full bg-slate-200" />
+          </View>
+          <ScrollView className="px-lg" contentContainerClassName="pb-3xl" showsVerticalScrollIndicator={false}>
+            <View className="flex-row items-center justify-between mb-lg">
+              <Text className="text-slate-900 text-xl font-extrabold">Filter Audit Log</Text>
+              <Pressable onPress={onClose} className="w-9 h-9 rounded-full bg-slate-100 items-center justify-center">
+                <X size={18} color="#475569" />
+              </Pressable>
+            </View>
+
+            <Text className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-sm">Action</Text>
+            <View className="flex-row flex-wrap mb-md">
+              <Chip label="All" active={local.action === "all"} onPress={() => setLocal(l => ({ ...l, action: "all" }))} />
+              {facets?.actions.map(a => (
+                <Chip key={a} label={a.replace(/_/g, " ")} active={local.action === a} onPress={() => setLocal(l => ({ ...l, action: a }))} />
+              ))}
+            </View>
+
+            <Text className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-sm">Entity</Text>
+            <View className="flex-row flex-wrap mb-md">
+              <Chip label="All" active={local.entity === "all"} onPress={() => setLocal(l => ({ ...l, entity: "all" }))} />
+              {facets?.entities.map(e => (
+                <Chip key={e} label={e} active={local.entity === e} onPress={() => setLocal(l => ({ ...l, entity: e }))} />
+              ))}
+            </View>
+
+            <Text className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-sm">User</Text>
+            <View className="flex-row flex-wrap mb-lg">
+              <Chip label="All" active={local.userId === "all"} onPress={() => setLocal(l => ({ ...l, userId: "all" }))} />
+              {facets?.users.map(u => (
+                <Chip key={u.id} label={u.name} active={local.userId === String(u.id)} onPress={() => setLocal(l => ({ ...l, userId: String(u.id) }))} />
+              ))}
+            </View>
+
+            <View className="flex-row gap-sm">
+              <Pressable
+                onPress={() => { setLocal({ action: "all", entity: "all", userId: "all" }); }}
+                className="flex-1 rounded-2xl border border-slate-200 py-md items-center"
+              >
+                <Text className="text-slate-600 font-semibold">Reset</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => { onApply(local); onClose(); }}
+                className="flex-1 rounded-2xl bg-amber-500 py-md items-center"
+              >
+                <Text className="text-white font-bold">Apply</Text>
+              </Pressable>
+            </View>
+          </ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
 
 export default function AuditScreen() {
   const router = useRouter();
-  const [report, setReport] = useState<AuditReport | null>(null);
+  const user = useAuth(s => s.user);
+  const [rows, setRows] = useState<AuditRow[]>([]);
+  const [facets, setFacets] = useState<Facets | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [ddlCopied, setDdlCopied] = useState(false);
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [showFilter, setShowFilter] = useState(false);
+  const [filters, setFilters] = useState({ action: "all", entity: "all", userId: "all" });
 
-  const fetchAudit = useCallback(async () => {
+  const load = useCallback(async () => {
     try {
-      const token = await getToken();
-      const res = await fetch(`${API_URL}/api/migration-audit`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.error?.message || `HTTP ${res.status}`);
-      }
-      const data: AuditReport = await res.json();
-      setReport(data);
-      setError(null);
+      const qs = new URLSearchParams();
+      if (filters.action !== "all") qs.set("action", filters.action);
+      if (filters.entity !== "all") qs.set("entity", filters.entity);
+      if (filters.userId !== "all") qs.set("userId", filters.userId);
+      qs.set("limit", "500");
+
+      const [data, fData] = await Promise.all([
+        authFetch(`/api/audit?${qs.toString()}`),
+        facets ? Promise.resolve(facets) : authFetch("/api/audit/facets"),
+      ]);
+      setRows(data);
+      if (!facets) setFacets(fData);
+      setError("");
     } catch (e: any) {
-      setError(e?.message || "Failed to load audit report");
+      setError(e?.message || "Failed to load audit log");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [filters]);
 
-  useEffect(() => {
-    fetchAudit();
-  }, [fetchAudit]);
+  useEffect(() => { setLoading(true); load(); }, [load]);
 
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    fetchAudit();
-  }, [fetchAudit]);
+  const onRefresh = () => { setRefreshing(true); load(); };
 
-  // ── loading ──────────────────────────────────────────────────────────────
-  if (loading) {
+  const filtered = rows.filter(r => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
     return (
-      <SafeAreaView edges={["top"]} className="flex-1 bg-zinc-950">
-        <StatusBar style="light" />
-        <View className="flex-1 items-center justify-center gap-4">
-          <ActivityIndicator color="#6366f1" size="large" />
-          <Text className="text-zinc-400 text-sm">Running migration audit…</Text>
-          <Text className="text-zinc-600 text-xs">Inspecting schema, config, timestamps, RLS…</Text>
-        </View>
+      r.userName.toLowerCase().includes(q) ||
+      r.action.toLowerCase().includes(q) ||
+      r.entity.toLowerCase().includes(q) ||
+      (r.details ?? "").toLowerCase().includes(q)
+    );
+  });
+
+  const activeFilterCount = [
+    filters.action !== "all",
+    filters.entity !== "all",
+    filters.userId !== "all",
+  ].filter(Boolean).length;
+
+  if (user?.role !== "super_admin") {
+    return (
+      <SafeAreaView edges={["top"]} className="flex-1 bg-stone-50 items-center justify-center px-lg">
+        <StatusBar style="dark" />
+        <Shield size={40} color="#d97706" />
+        <Text className="text-stone-900 font-bold text-lg mt-md">Admin Only</Text>
+        <Text className="text-stone-500 text-sm text-center mt-xs">The audit log is restricted to Super Admins.</Text>
       </SafeAreaView>
     );
   }
-
-  // ── error ────────────────────────────────────────────────────────────────
-  if (error || !report) {
-    return (
-      <SafeAreaView edges={["top"]} className="flex-1 bg-zinc-950">
-        <StatusBar style="light" />
-        <View className="flex-1 items-center justify-center px-6 gap-4">
-          <XCircle size={40} color="#f87171" />
-          <Text className="text-zinc-100 font-bold text-lg text-center">Audit Failed</Text>
-          <Text className="text-zinc-400 text-sm text-center">{error}</Text>
-          <Pressable
-            onPress={() => { setLoading(true); setError(null); fetchAudit(); }}
-            className="bg-indigo-600 rounded-xl px-6 py-3 active:opacity-80"
-            accessibilityLabel="Retry audit"
-          >
-            <Text className="text-white font-semibold">Retry</Text>
-          </Pressable>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  const rc = readinessColors(report.readiness.score);
-  const { sections } = report;
-  const errorIssues = sections.issues.filter((i) => i.severity === "error");
-  const warnIssues = sections.issues.filter((i) => i.severity === "warning");
-  const infoIssues = sections.issues.filter((i) => i.severity === "info");
 
   return (
-    <SafeAreaView edges={["top"]} className="flex-1 bg-zinc-950">
-      <StatusBar style="light" />
+    <SafeAreaView edges={["top"]} className="flex-1 bg-slate-50">
+      <StatusBar style="dark" />
 
       {/* Header */}
-      <View className="flex-row items-center justify-between px-4 pt-2 pb-3 border-b border-zinc-800">
-        <View>
-          <Text className="text-zinc-100 text-xl font-bold">Migration Audit</Text>
-          <Text className="text-zinc-500 text-xs mt-0.5">
-            Neon → Supabase readiness · {new Date(report.generatedAt).toLocaleString()}
-          </Text>
+      <View className="bg-white border-b border-slate-100 px-lg pt-sm pb-md"
+        style={{ shadowColor: "#000", shadowOpacity: 0.04, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 }}>
+        <View className="flex-row items-center gap-sm mb-md">
+          <Pressable onPress={() => router.back()} accessibilityLabel="Back"
+            className="w-9 h-9 rounded-full bg-slate-100 items-center justify-center active:opacity-70">
+            <ChevronLeft size={20} color="#334155" />
+          </Pressable>
+          <View className="flex-1">
+            <Text className="text-slate-900 text-xl font-extrabold">Critical Audit Log</Text>
+            <Text className="text-slate-500 text-xs mt-xs">
+              {loading ? "Loading…" : `${filtered.length} records · append-only`}
+            </Text>
+          </View>
+          <Pressable onPress={onRefresh} accessibilityLabel="Refresh"
+            className="w-9 h-9 rounded-full bg-slate-100 items-center justify-center active:opacity-70">
+            <RefreshCw size={16} color="#64748b" />
+          </Pressable>
         </View>
-        <Pressable
-          onPress={onRefresh}
-          className="w-9 h-9 rounded-xl bg-zinc-800 items-center justify-center active:opacity-70"
-          accessibilityLabel="Refresh audit"
-        >
-          <RefreshCw size={16} color="#a1a1aa" />
-        </Pressable>
+
+        {/* Search + Filter */}
+        <View className="flex-row gap-sm">
+          <View className="flex-1 flex-row items-center rounded-xl bg-slate-100 px-md gap-sm">
+            <Search size={16} color="#94a3b8" />
+            <TextInput
+              value={search}
+              onChangeText={setSearch}
+              placeholder="Search by user, action, details…"
+              placeholderTextColor="#94a3b8"
+              className="flex-1 py-sm text-slate-800 text-sm"
+              returnKeyType="search"
+            />
+            {search.length > 0 && (
+              <Pressable onPress={() => setSearch("")} accessibilityLabel="Clear search">
+                <X size={14} color="#94a3b8" />
+              </Pressable>
+            )}
+          </View>
+          <Pressable
+            onPress={() => setShowFilter(true)}
+            accessibilityLabel="Filter audit log"
+            className={`w-11 h-11 rounded-xl items-center justify-center ${activeFilterCount > 0 ? "bg-amber-500" : "bg-slate-100"}`}
+          >
+            <Filter size={18} color={activeFilterCount > 0 ? "#fff" : "#64748b"} />
+            {activeFilterCount > 0 && (
+              <View className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-rose-500 items-center justify-center">
+                <Text className="text-white text-[9px] font-bold">{activeFilterCount}</Text>
+              </View>
+            )}
+          </Pressable>
+        </View>
+
+        {/* Active filter chips */}
+        {activeFilterCount > 0 && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName="gap-xs pt-sm">
+            {filters.action !== "all" && (
+              <View className="flex-row items-center gap-xs rounded-full bg-amber-100 border border-amber-200 px-sm py-xs">
+                <Text className="text-amber-700 text-xs font-semibold">{filters.action.replace(/_/g, " ")}</Text>
+                <Pressable onPress={() => setFilters(f => ({ ...f, action: "all" }))} accessibilityLabel="Remove action filter">
+                  <X size={11} color="#d97706" />
+                </Pressable>
+              </View>
+            )}
+            {filters.entity !== "all" && (
+              <View className="flex-row items-center gap-xs rounded-full bg-amber-100 border border-amber-200 px-sm py-xs">
+                <Text className="text-amber-700 text-xs font-semibold">{filters.entity}</Text>
+                <Pressable onPress={() => setFilters(f => ({ ...f, entity: "all" }))} accessibilityLabel="Remove entity filter">
+                  <X size={11} color="#d97706" />
+                </Pressable>
+              </View>
+            )}
+            {filters.userId !== "all" && (
+              <View className="flex-row items-center gap-xs rounded-full bg-amber-100 border border-amber-200 px-sm py-xs">
+                <Text className="text-amber-700 text-xs font-semibold">
+                  {facets?.users.find(u => String(u.id) === filters.userId)?.name ?? `User #${filters.userId}`}
+                </Text>
+                <Pressable onPress={() => setFilters(f => ({ ...f, userId: "all" }))} accessibilityLabel="Remove user filter">
+                  <X size={11} color="#d97706" />
+                </Pressable>
+              </View>
+            )}
+          </ScrollView>
+        )}
       </View>
 
-      <ScrollView
-        className="flex-1"
-        contentContainerClassName="px-4 pb-12 pt-4"
-        showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#6366f1" />}
-      >
-        {/* ── Readiness Banner ── */}
-        <View className={`rounded-2xl border ${rc.border} ${rc.bg} p-4 mb-4`}>
-          <View className="flex-row items-center gap-2 mb-2">
-            <View className={`${rc.badge} rounded-full px-3 py-1`}>
-              <Text className="text-white text-xs font-bold tracking-wider">{rc.text}</Text>
-            </View>
-          </View>
-          <Text className="text-zinc-200 text-sm leading-5">{report.readiness.summary}</Text>
-          <View className="flex-row gap-4 mt-3 pt-3 border-t border-zinc-700">
-            <View className="items-center">
-              <Text className="text-rose-400 text-xl font-bold">{report.readiness.errorCount}</Text>
-              <Text className="text-zinc-500 text-xs">Blockers</Text>
-            </View>
-            <View className="items-center">
-              <Text className="text-amber-400 text-xl font-bold">{report.readiness.warningCount}</Text>
-              <Text className="text-zinc-500 text-xs">Warnings</Text>
-            </View>
-            <View className="items-center">
-              <Text className="text-sky-400 text-xl font-bold">{report.readiness.infoCount}</Text>
-              <Text className="text-zinc-500 text-xs">Notes</Text>
-            </View>
-          </View>
-        </View>
+      {/* Legend */}
+      <View className="bg-amber-50 border-b border-amber-100 px-lg py-sm flex-row items-center gap-sm">
+        <Shield size={13} color="#d97706" />
+        <Text className="text-amber-700 text-xs font-medium flex-1">
+          Append-only · Every record captures actor name, ID, entity ID, and exact timestamp
+        </Text>
+      </View>
 
-        {/* ── Migration Checklist ── */}
-        <CollapsibleSection
-          title="Migration Checklist"
-          icon={<CheckCircle size={15} color="#818cf8" />}
-          defaultOpen
-        >
-          {report.migrationChecklist.map((item, i) => (
-            <ChecklistRow key={i} item={item} />
+      {/* Content */}
+      {loading ? (
+        <ScrollView className="flex-1" contentContainerClassName="px-lg pt-lg gap-sm">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <View key={i} className="h-24 rounded-2xl bg-slate-200" />
           ))}
-        </CollapsibleSection>
-
-        {/* ── Issues ── */}
-        {sections.issues.length > 0 && (
-          <CollapsibleSection
-            title={`Issues (${sections.issues.length})`}
-            icon={<AlertTriangle size={15} color="#818cf8" />}
-            defaultOpen={report.readiness.errorCount > 0}
-          >
-            {errorIssues.length > 0 && (
-              <>
-                <Text className="text-rose-400 text-xs font-bold uppercase tracking-wider mb-2">
-                  Blockers ({errorIssues.length})
-                </Text>
-                {errorIssues.map((issue, i) => <IssueRow key={i} issue={issue} />)}
-              </>
-            )}
-            {warnIssues.length > 0 && (
-              <>
-                <Text className="text-amber-400 text-xs font-bold uppercase tracking-wider mb-2 mt-2">
-                  Warnings ({warnIssues.length})
-                </Text>
-                {warnIssues.map((issue, i) => <IssueRow key={i} issue={issue} />)}
-              </>
-            )}
-            {infoIssues.length > 0 && (
-              <>
-                <Text className="text-sky-400 text-xs font-bold uppercase tracking-wider mb-2 mt-2">
-                  Notes ({infoIssues.length})
-                </Text>
-                {infoIssues.map((issue, i) => <IssueRow key={i} issue={issue} />)}
-              </>
-            )}
-          </CollapsibleSection>
-        )}
-
-        {/* ── Schema Portability ── */}
-        <CollapsibleSection
-          title="Schema Portability"
-          icon={<Database size={15} color="#818cf8" />}
+        </ScrollView>
+      ) : error ? (
+        <View className="flex-1 items-center justify-center px-lg">
+          <AlertTriangle size={32} color="#f43f5e" />
+          <Text className="text-slate-900 font-bold text-lg mt-md">Failed to load</Text>
+          <Text className="text-slate-500 text-sm text-center mt-xs">{error}</Text>
+          <Pressable onPress={() => { setLoading(true); load(); }}
+            className="mt-lg rounded-2xl bg-amber-500 px-xl py-md active:opacity-80">
+            <Text className="text-white font-bold">Retry</Text>
+          </Pressable>
+        </View>
+      ) : filtered.length === 0 ? (
+        <View className="flex-1 items-center justify-center px-lg">
+          <Shield size={40} color="#94a3b8" />
+          <Text className="text-slate-900 font-bold text-lg mt-md">No records found</Text>
+          <Text className="text-slate-500 text-sm text-center mt-xs">
+            {search ? "Try a different search term." : "No audit entries match the current filters."}
+          </Text>
+        </View>
+      ) : (
+        <ScrollView
+          className="flex-1"
+          contentContainerClassName="px-lg pt-md pb-3xl"
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#d97706" />}
         >
-          <View className="flex-row flex-wrap gap-2 mb-3">
-            <StatPill label="Tables" value={String(sections.schemaPortability.tableCount)} />
-            <StatPill label="Foreign Keys" value={String(sections.schemaPortability.foreignKeyCount)} />
-            <StatPill label="Indexes" value={String(sections.schemaPortability.indexCount)} />
-          </View>
-
-          <Text className="text-zinc-400 text-xs font-semibold uppercase tracking-wider mb-2">Tables</Text>
-          <View className="flex-row flex-wrap gap-1.5 mb-3">
-            {sections.schemaPortability.tables.map((t) => (
-              <View key={t} className="bg-zinc-800 rounded-md px-2 py-1">
-                <Text className="text-zinc-300 text-xs font-mono">{t}</Text>
+          {/* Stats bar */}
+          <View className="flex-row gap-sm mb-md">
+            {[
+              { label: "Total", value: filtered.length, color: "text-slate-900" },
+              { label: "Sales", value: filtered.filter(r => r.entity === "sale").length, color: "text-indigo-600" },
+              { label: "Stock", value: filtered.filter(r => r.entity === "stock").length, color: "text-amber-600" },
+              { label: "Users", value: filtered.filter(r => r.entity === "user").length, color: "text-emerald-600" },
+            ].map(s => (
+              <View key={s.label} className="flex-1 rounded-xl bg-white border border-slate-100 p-sm items-center"
+                style={{ shadowColor: "#000", shadowOpacity: 0.03, shadowRadius: 4, elevation: 1 }}>
+                <Text className={`text-base font-extrabold ${s.color}`}>{s.value}</Text>
+                <Text className="text-slate-400 text-[10px] font-medium">{s.label}</Text>
               </View>
             ))}
           </View>
 
-          <Text className="text-zinc-400 text-xs font-semibold uppercase tracking-wider mb-2">Extensions</Text>
-          {sections.schemaPortability.extensions.map((ext) => (
-            <View key={ext.name} className="flex-row items-center gap-2 py-1.5 border-b border-zinc-800">
-              {ext.safe
-                ? <CheckCircle size={13} color="#34d399" />
-                : <AlertTriangle size={13} color="#fbbf24" />}
-              <Text className="text-zinc-300 text-xs font-mono flex-1">{ext.name}</Text>
-              <Text className="text-zinc-500 text-xs">v{ext.version}</Text>
-              <Text className={ext.safe ? "text-emerald-400 text-xs" : "text-amber-400 text-xs"}>
-                {ext.safe ? "Safe" : "Review"}
-              </Text>
-            </View>
+          {filtered.map(row => (
+            <AuditCard key={row.id} row={row} />
           ))}
+        </ScrollView>
+      )}
 
-          {sections.schemaPortability.exoticExtensions.length === 0 && (
-            <View className="flex-row items-center gap-2 mt-2">
-              <CheckCircle size={13} color="#34d399" />
-              <Text className="text-emerald-400 text-xs">No exotic extensions — fully portable</Text>
-            </View>
-          )}
-        </CollapsibleSection>
-
-        {/* ── Configuration ── */}
-        <CollapsibleSection
-          title="Configuration Audit"
-          icon={<Settings size={15} color="#818cf8" />}
-        >
-          {Object.entries(sections.configuration).map(([key, val]) => (
-            <View key={key} className="flex-row items-start gap-2 py-2.5 border-b border-zinc-800">
-              {val.present
-                ? <CheckCircle size={14} color="#34d399" />
-                : <XCircle size={14} color="#f87171" />}
-              <View className="flex-1">
-                <Text className="text-zinc-200 text-xs font-mono font-semibold">{key}</Text>
-                <Text className="text-zinc-400 text-xs mt-0.5">{val.note}</Text>
-              </View>
-            </View>
-          ))}
-          <View className="mt-3 rounded-lg bg-zinc-800/60 p-3">
-            <Text className="text-zinc-300 text-xs leading-4">
-              <Text className="text-emerald-400 font-semibold">Migration is config-only.</Text>
-              {" "}Swap DATABASE_URL to the Supabase connection string. No code changes required.
-            </Text>
-          </View>
-        </CollapsibleSection>
-
-        {/* ── Timestamps ── */}
-        <CollapsibleSection
-          title="Timestamp / UTC Audit"
-          icon={<Clock size={15} color="#818cf8" />}
-        >
-          <View className="flex-row gap-3 mb-3">
-            <StatPill label="Total TS Cols" value={String(sections.timestamps.totalTimestampColumns)} />
-            <StatPill label="With TZ" value={String(sections.timestamps.withTimezone)} color="emerald" />
-            <StatPill label="Without TZ" value={String(sections.timestamps.withoutTimezone)} color={sections.timestamps.withoutTimezone > 0 ? "amber" : "emerald"} />
-          </View>
-
-          <View className={`rounded-lg border p-3 mb-3 ${sections.timestamps.withoutTimezone === 0 ? "border-emerald-700 bg-emerald-900/30" : "border-amber-700 bg-amber-900/30"}`}>
-            <Text className={`text-xs leading-4 ${sections.timestamps.withoutTimezone === 0 ? "text-emerald-300" : "text-amber-300"}`}>
-              {sections.timestamps.assessment}
-            </Text>
-          </View>
-
-          {sections.timestamps.localTimestampColumns.length > 0 && (
-            <>
-              <Text className="text-zinc-400 text-xs font-semibold uppercase tracking-wider mb-2">
-                Columns Without Timezone
-              </Text>
-              {sections.timestamps.localTimestampColumns.map((col) => (
-                <View key={col} className="flex-row items-center gap-2 py-1">
-                  <AlertTriangle size={12} color="#fbbf24" />
-                  <Text className="text-zinc-300 text-xs font-mono">{col}</Text>
-                </View>
-              ))}
-            </>
-          )}
-
-          <View className="mt-3 rounded-lg bg-zinc-800/60 p-3">
-            <Text className="text-zinc-400 text-xs leading-4">
-              Supabase defaults to UTC. TIMESTAMP WITHOUT TIME ZONE columns store values as-is — if your app always writes UTC (which this app does via Node.js Date objects), no data conversion is needed on migration.
-            </Text>
-          </View>
-        </CollapsibleSection>
-
-        {/* ── Row Level Security ── */}
-        <CollapsibleSection
-          title="Row Level Security Assessment"
-          icon={<Shield size={15} color="#818cf8" />}
-        >
-          <View className="rounded-lg border border-sky-700 bg-sky-900/30 p-3 mb-3">
-            <Text className="text-sky-300 text-xs font-semibold mb-1">Current Enforcement Layer</Text>
-            <Text className="text-sky-200 text-xs leading-4">
-              {sections.rowLevelSecurity.enforcementDetail}
-            </Text>
-          </View>
-
-          <Text className="text-zinc-400 text-xs font-semibold uppercase tracking-wider mb-2">
-            Role → RLS Policy Mapping
-          </Text>
-          {Object.entries(sections.rowLevelSecurity.roleMapping).map(([role, mapping]) => (
-            <View key={role} className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-3 mb-2">
-              <Text className="text-indigo-300 text-xs font-bold uppercase tracking-wider mb-1">{role.replace(/_/g, " ")}</Text>
-              <Text className="text-zinc-300 text-xs mb-2">{mapping.description}</Text>
-              <Text className="text-zinc-500 text-xs font-semibold mb-1">Suggested Policy:</Text>
-              <Text className="text-zinc-400 text-xs font-mono leading-4">{mapping.suggestedPolicy}</Text>
-            </View>
-          ))}
-
-          <Text className="text-zinc-400 text-xs font-semibold uppercase tracking-wider mb-2 mt-3">
-            RLS Migration Path
-          </Text>
-          {sections.rowLevelSecurity.rlsMigrationPath.map((step, i) => (
-            <View key={i} className="flex-row gap-2 mb-2">
-              <View className="w-5 h-5 rounded-full bg-indigo-900 items-center justify-center mt-0.5">
-                <Text className="text-indigo-300 text-xs font-bold">{i + 1}</Text>
-              </View>
-              <Text className="text-zinc-400 text-xs leading-4 flex-1">{step.replace(/^\d+\.\s*/, "")}</Text>
-            </View>
-          ))}
-        </CollapsibleSection>
-
-        {/* ── DDL Export ── */}
-        <CollapsibleSection
-          title="Clean DDL Export"
-          icon={<FileText size={15} color="#818cf8" />}
-        >
-          <Text className="text-zinc-400 text-xs mb-3 leading-4">
-            {sections.ddlExport.description}
-          </Text>
-          <View className="rounded-lg bg-zinc-800 border border-zinc-700 p-3 mb-3">
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <Text className="text-zinc-300 text-xs font-mono leading-5">
-                {sections.ddlExport.sql}
-              </Text>
-            </ScrollView>
-          </View>
-          <View className="rounded-lg bg-zinc-800/60 p-3">
-            <Text className="text-zinc-400 text-xs leading-4">
-              <Text className="text-emerald-400 font-semibold">How to use: </Text>
-              Copy this DDL and run it against a fresh Supabase Postgres instance (SQL Editor or psql). All statements use IF NOT EXISTS — safe to re-run.
-            </Text>
-          </View>
-        </CollapsibleSection>
-
-        {/* ── Final Summary ── */}
-        <Card className="border-indigo-800 bg-indigo-950/40">
-          <Text className="text-indigo-300 text-xs font-bold uppercase tracking-wider mb-3">
-            Final Readiness Summary
-          </Text>
-          <SummaryRow label="Schema portability" status="pass" detail="Standard Postgres DDL — no Neon-specific syntax" />
-          <SummaryRow label="Config (env-var driven)" status={sections.configuration.DATABASE_URL?.present ? "pass" : "fail"} detail="DATABASE_URL, JWT_SECRET, S3 keys all from env" />
-          <SummaryRow label="Timestamps UTC-safe" status={sections.timestamps.withoutTimezone === 0 ? "pass" : "warn"} detail={sections.timestamps.withoutTimezone === 0 ? "All timestamps are UTC-compatible" : `${sections.timestamps.withoutTimezone} col(s) without timezone — verify UTC writes`} />
-          <SummaryRow label="RLS assessment" status="pass" detail="Application-layer enforcement documented; RLS migration path provided" />
-          <SummaryRow label="DDL export" status="pass" detail="Clean stock-Postgres DDL ready to run on Supabase" />
-          <SummaryRow label="Connection pooling" status="warn" detail="Use Supabase PgBouncer URL; keep pool max ≤ 10" />
-
-          <View className="mt-3 pt-3 border-t border-indigo-800">
-            <Text className="text-zinc-400 text-xs leading-4">
-              <Text className="text-indigo-300 font-semibold">To migrate: </Text>
-              (1) Run the DDL export on a fresh Supabase instance. (2) Copy data with pg_dump / pg_restore or Supabase's import tool. (3) Update DATABASE_URL to the Supabase connection string (use the PgBouncer pooler URL). (4) Deploy. No code changes required.
-            </Text>
-          </View>
-        </Card>
-      </ScrollView>
+      <FilterSheet
+        visible={showFilter}
+        onClose={() => setShowFilter(false)}
+        facets={facets}
+        filters={filters}
+        onApply={setFilters}
+      />
     </SafeAreaView>
-  );
-}
-
-// ─── tiny helpers ─────────────────────────────────────────────────────────────
-
-function StatPill({ label, value, color = "zinc" }: { label: string; value: string; color?: string }) {
-  const textColor = color === "emerald" ? "text-emerald-400" : color === "amber" ? "text-amber-400" : "text-zinc-200";
-  return (
-    <View className="rounded-lg bg-zinc-800 px-3 py-2 items-center">
-      <Text className={`${textColor} text-base font-bold`}>{value}</Text>
-      <Text className="text-zinc-500 text-xs">{label}</Text>
-    </View>
-  );
-}
-
-function SummaryRow({ label, status, detail }: { label: string; status: CheckStatus; detail: string }) {
-  const Icon = status === "pass" ? CheckCircle : status === "fail" ? XCircle : AlertTriangle;
-  const iconColor = status === "pass" ? "#34d399" : status === "fail" ? "#f87171" : "#fbbf24";
-  return (
-    <View className="flex-row items-start gap-2 py-2 border-b border-indigo-900/50">
-      <Icon size={14} color={iconColor} />
-      <View className="flex-1">
-        <Text className="text-zinc-200 text-xs font-semibold">{label}</Text>
-        <Text className="text-zinc-500 text-xs mt-0.5">{detail}</Text>
-      </View>
-    </View>
   );
 }

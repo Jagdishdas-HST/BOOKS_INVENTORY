@@ -67,11 +67,7 @@ export const sales = pgTable("sales", {
   totalValue: numeric("total_value", { precision: 12, scale: 2 }).notNull(),
   paymentType: text("payment_type").$type<"cash" | "online" | "debt" | "free">().notNull(),
   isDiscounted: boolean("is_discounted").notNull().default(false),
-  // Field-time timestamp: when the distributor actually logged the sale on the
-  // device (may be earlier than createdAt if it was queued offline). Kept
-  // SEPARATE from createdAt (the server sync/receipt time) for the audit trail.
   clientLoggedAt: timestamp("client_logged_at"),
-  // Device-generated idempotency key so a retried sync never double-inserts.
   clientId: text("client_id").unique(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
@@ -93,11 +89,6 @@ export const paymentAllocations = pgTable("payment_allocations", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
-// Queued offline sales that FAILED stock re-validation at sync time. Instead of
-// silently forcing negative stock or dropping the sale, we record it here for
-// an Admin/Manager to review. Resolution either "approves" (forces the sale
-// through, allowing negative held stock to be reconciled) or "rejects" (drops
-// the queued sale, acknowledging the loss deliberately).
 export const saleConflicts = pgTable("sale_conflicts", {
   id: serial("id").primaryKey(),
   distributorId: integer("distributor_id").references(() => users.id).notNull(),
