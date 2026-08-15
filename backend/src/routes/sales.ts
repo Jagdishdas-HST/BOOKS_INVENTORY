@@ -15,17 +15,26 @@ const CreateSale = z.object({
   quantity: z.coerce.number().int().positive(),
   unitPrice: z.coerce.number().nonnegative(),
   paymentType: z.enum(["cash", "online", "debt", "free"]),
+  customerId: z.coerce.number().int().nullable().optional(),
   clientLoggedAt: z.coerce.date().nullable().optional(),
   clientId: z.string().min(1).max(120).nullable().optional(),
 });
 
 salesRouter.post("/", requireAuth, validateBody(CreateSale), asyncHandler(async (req: AuthedRequest, res) => {
   if (req.user!.role !== "distributor") throw new HttpError(403, "FORBIDDEN", "Only distributors log sales");
-  const { bookId, quantity, paymentType, clientLoggedAt, clientId } = req.body;
+  const { bookId, quantity, paymentType, clientLoggedAt, clientId, customerId } = req.body;
   const distId = req.user!.id;
 
   const [book] = await db.select().from(schema.books).where(eq(schema.books.id, bookId));
   if (!book) throw new HttpError(400, "BAD_REQUEST", "Book not found");
+
+  // Validate customer ownership if provided.
+  let resolvedCustomerId: number | null = null;
+  if (customerId) {
+    const [cust] = await db.select().from(schema.customers).where(eq(schema.customers.id, customerId));
+    if (!cust || cust.distributorId !== distId) throw new HttpError(400, "BAD_REQUEST", "Customer not found");
+    resolvedCustomerId = cust.id;
+  }
 
   const isFree = paymentType === "free";
   const retail = parseFloat(book.retailPrice);
@@ -51,7 +60,6 @@ salesRouter.post("/", requireAuth, validateBody(CreateSale), asyncHandler(async 
       clientLoggedAt: clientLoggedAt ?? null,
       clientId: clientId ?? null,
     }).returning();
-    // Critical audit: sale conflict — actor, quantity, book+ID, held stock
     await logAudit(
       distId,
       "sale_conflict",
@@ -65,6 +73,7 @@ salesRouter.post("/", requireAuth, validateBody(CreateSale), asyncHandler(async 
 
   const [row] = await db.insert(schema.sales).values({
     distributorId: distId, bookId, quantity,
+    customerId: resolvedCustomerId,
     unitPrice: String(unitPrice), totalValue: String(total),
     paymentType, isDiscounted,
     clientLoggedAt: clientLoggedAt ?? null,
@@ -73,7 +82,6 @@ salesRouter.post("/", requireAuth, validateBody(CreateSale), asyncHandler(async 
 
   const tag = isFree ? "FREE" : isDiscounted ? `${paymentType} discounted` : paymentType;
   const offlineNote = clientLoggedAt ? ` (logged offline ${new Date(clientLoggedAt).toISOString()})` : "";
-  // Critical audit: sale — actor name+ID, quantity, book title+ID, payment type, total, date
   await logAudit(
     distId,
     "sale",
@@ -100,8 +108,10 @@ salesRouter.get("/", requireAuth, asyncHandler(async (req: AuthedRequest, res) =
     bookTitle: schema.books.title,
     sku: schema.books.sku,
     retailPrice: schema.books.retailPrice,
+    customerName: schema.customers.name,
   }).from(schema.sales)
     .innerJoin(schema.books, eq(schema.sales.bookId, schema.books.id))
+    .leftJoin(schema.customers, eq(schema.sales.customerId, schema.customers.id))
     .where(eq(schema.sales.distributorId, distId))
     .orderBy(desc(schema.sales.createdAt))
     .limit(100);

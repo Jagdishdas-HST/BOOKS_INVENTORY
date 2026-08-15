@@ -1,12 +1,13 @@
 
 import { useEffect, useState } from "react";
-import { View, Text, ScrollView, TextInput, Pressable } from "react-native";
+import { View, Text, ScrollView, TextInput, Pressable, Modal, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { Image } from "expo-image";
 import {
   ChevronLeft, Check, Gift, WifiOff, CloudUpload, Wifi, BookOpen,
+  User as UserIcon, Building2, Plus, X, Search as SearchIcon, ChevronDown,
 } from "lucide-react-native";
 import { authFetch } from "@/lib/auth";
 import { Button, Chip, Skeleton } from "@/components/ui";
@@ -15,8 +16,16 @@ import { useOfflineQueue } from "@/lib/offlineQueue";
 import { useIsOnline, startConnectivityPolling } from "@/lib/connectivity";
 import { loadHoldingsCache, type HoldingItem } from "@/lib/offlineCache";
 
+type CustomerLite = {
+  id: number;
+  name: string;
+  type: "institute" | "individual";
+  contactPerson: string | null;
+};
+
 export default function NewSale() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ customerId?: string; customerName?: string }>();
   const enqueue = useOfflineQueue((s) => s.enqueue);
   const online = useIsOnline();
 
@@ -30,9 +39,18 @@ export default function NewSale() {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Customer selection
+  const [customerId, setCustomerId] = useState<number | null>(
+    params.customerId ? Number(params.customerId) : null,
+  );
+  const [customerName, setCustomerName] = useState<string | null>(params.customerName ?? null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [customerQuery, setCustomerQuery] = useState("");
+  const [customerResults, setCustomerResults] = useState<CustomerLite[]>([]);
+  const [customerLoading, setCustomerLoading] = useState(false);
+
   useEffect(() => {
     startConnectivityPolling();
-    // Load cached holdings first (works offline).
     loadHoldingsCache().then((c) => {
       if (c) {
         setHoldings(c.data.filter((x) => x.quantity > 0));
@@ -40,7 +58,6 @@ export default function NewSale() {
         setLoading(false);
       }
     });
-    // Then try to fetch live data if online.
     authFetch("/api/stock/holdings")
       .then((h: HoldingItem[]) => {
         setHoldings(h.filter((x) => x.quantity > 0));
@@ -49,6 +66,36 @@ export default function NewSale() {
       })
       .catch(() => setLoading(false));
   }, []);
+
+  const openPicker = async () => {
+    setPickerOpen(true);
+    setCustomerLoading(true);
+    try {
+      setCustomerResults(await authFetch("/api/customers"));
+    } catch {}
+    setCustomerLoading(false);
+  };
+
+  const searchCustomers = async (t: string) => {
+    setCustomerQuery(t);
+    setCustomerLoading(true);
+    try {
+      setCustomerResults(await authFetch(`/api/customers${t.trim() ? `?q=${encodeURIComponent(t.trim())}` : ""}`));
+    } catch {}
+    setCustomerLoading(false);
+  };
+
+  const chooseCustomer = (c: CustomerLite | null) => {
+    if (c) {
+      setCustomerId(c.id);
+      setCustomerName(c.name);
+    } else {
+      setCustomerId(null);
+      setCustomerName(null);
+    }
+    setPickerOpen(false);
+    haptics.selection();
+  };
 
   const selectBook = (b: HoldingItem) => {
     setBook(b);
@@ -81,23 +128,22 @@ export default function NewSale() {
             quantity: q,
             unitPrice,
             paymentType: payment,
+            customerId: customerId ?? undefined,
           }),
         });
         haptics.success();
         router.back();
         return;
       } catch (e: any) {
-        // Surface hard validation errors; fall through to queue on network failure.
-        if (e?.message && /only hold|stock|Book/i.test(e.message)) {
+        if (e?.message && /only hold|stock|Book|Customer/i.test(e.message)) {
           setError(e.message);
           setSaving(false);
           return;
         }
-        // Network failure — fall through to offline queue.
       }
     }
 
-    // Offline path: queue locally with a field-time timestamp.
+    // Offline path (customer link is only stored online, so note it in queue).
     await enqueue({
       bookId: book.bookId,
       bookTitle: book.title,
@@ -139,9 +185,37 @@ export default function NewSale() {
           </Text>
         </View>
 
+        {/* Customer selector */}
+        <Text className="text-stone-600 text-sm font-medium mb-sm">Customer (optional)</Text>
+        {customerId && customerName ? (
+          <View className="flex-row items-center rounded-xl bg-amber-50 border border-amber-200 p-md">
+            <View className="w-9 h-9 rounded-full bg-amber-100 items-center justify-center">
+              <UserIcon size={16} color="#d97706" />
+            </View>
+            <Text className="text-stone-900 font-semibold flex-1 ml-sm" numberOfLines={1}>{customerName}</Text>
+            <Pressable onPress={openPicker} accessibilityLabel="Change customer" className="px-sm py-xs">
+              <Text className="text-amber-700 text-sm font-semibold">Change</Text>
+            </Pressable>
+            <Pressable onPress={() => chooseCustomer(null)} accessibilityLabel="Remove customer" className="pl-sm">
+              <X size={18} color="#a8a29e" />
+            </Pressable>
+          </View>
+        ) : (
+          <Pressable
+            onPress={online ? openPicker : undefined}
+            accessibilityLabel="Select customer"
+            className={`flex-row items-center justify-between rounded-xl border p-md ${online ? "bg-white border-stone-200 active:opacity-80" : "bg-stone-100 border-stone-200"}`}
+          >
+            <Text className={online ? "text-stone-500" : "text-stone-400"}>
+              {online ? "Attach to a customer / institute" : "Customer link needs a connection"}
+            </Text>
+            <ChevronDown size={18} color="#a8a29e" />
+          </Pressable>
+        )}
+
         {/* Cached holdings notice */}
         {!online && holdingsCachedAt && (
-          <View className="rounded-xl bg-stone-100 border border-stone-200 p-sm mb-md flex-row items-center gap-sm">
+          <View className="rounded-xl bg-stone-100 border border-stone-200 p-sm mt-md flex-row items-center gap-sm">
             <CloudUpload size={14} color="#78716c" />
             <Text className="text-stone-600 text-xs flex-1">
               Showing cached stock as of{" "}
@@ -152,7 +226,7 @@ export default function NewSale() {
           </View>
         )}
 
-        <Text className="text-stone-600 text-sm font-medium mb-sm">Select Book</Text>
+        <Text className="text-stone-600 text-sm font-medium mb-sm mt-lg">Select Book</Text>
         {loading ? (
           <Skeleton count={3} />
         ) : holdings.length === 0 ? (
@@ -256,6 +330,78 @@ export default function NewSale() {
           </>
         )}
       </ScrollView>
+
+      {/* Customer picker modal */}
+      <Modal visible={pickerOpen} transparent animationType="slide" onRequestClose={() => setPickerOpen(false)}>
+        <Pressable className="flex-1 bg-black/40" onPress={() => setPickerOpen(false)} />
+        <View className="bg-stone-50 rounded-t-3xl px-lg pt-lg" style={{ maxHeight: "80%" }}>
+          <View className="flex-row items-center justify-between mb-md">
+            <Text className="text-stone-900 text-lg font-extrabold">Select Customer</Text>
+            <Pressable onPress={() => setPickerOpen(false)} accessibilityLabel="Close">
+              <X size={22} color="#292524" />
+            </Pressable>
+          </View>
+
+          <View className="flex-row items-center rounded-xl bg-white border border-stone-200 px-md mb-md">
+            <SearchIcon size={18} color="#a8a29e" />
+            <TextInput
+              value={customerQuery}
+              onChangeText={searchCustomers}
+              placeholder="Search customers…"
+              placeholderTextColor="#a8a29e"
+              className="flex-1 px-sm py-md text-stone-900"
+            />
+            {customerLoading && <ActivityIndicator size="small" color="#d97706" />}
+          </View>
+
+          <Pressable
+            onPress={() => {
+              setPickerOpen(false);
+              router.push({ pathname: "/customer/new", params: { returnToSale: "1" } });
+            }}
+            className="flex-row items-center gap-sm rounded-xl bg-amber-600 p-md mb-md active:opacity-80"
+          >
+            <Plus size={18} color="#fff" />
+            <Text className="text-white font-semibold">Add New Customer</Text>
+          </Pressable>
+
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerClassName="pb-3xl">
+            <Pressable
+              onPress={() => chooseCustomer(null)}
+              className="flex-row items-center rounded-xl bg-white border border-stone-200 p-md mb-sm active:opacity-80"
+            >
+              <View className="w-9 h-9 rounded-full bg-stone-100 items-center justify-center">
+                <X size={16} color="#78716c" />
+              </View>
+              <Text className="text-stone-600 font-medium ml-sm">No customer (walk-in)</Text>
+            </Pressable>
+
+            {customerResults.length === 0 && !customerLoading ? (
+              <Text className="text-stone-500 text-sm text-center py-lg">No customers found.</Text>
+            ) : (
+              customerResults.map((c) => (
+                <Pressable
+                  key={c.id}
+                  onPress={() => chooseCustomer(c)}
+                  className="flex-row items-center rounded-xl bg-white border border-stone-200 p-md mb-sm active:opacity-80"
+                >
+                  <View className={`w-9 h-9 rounded-full items-center justify-center ${c.type === "institute" ? "bg-indigo-100" : "bg-amber-100"}`}>
+                    {c.type === "institute"
+                      ? <Building2 size={16} color="#4f46e5" />
+                      : <UserIcon size={16} color="#d97706" />}
+                  </View>
+                  <View className="flex-1 ml-sm">
+                    <Text className="text-stone-900 font-semibold" numberOfLines={1}>{c.name}</Text>
+                    {c.contactPerson ? (
+                      <Text className="text-stone-500 text-xs">{c.contactPerson}</Text>
+                    ) : null}
+                  </View>
+                </Pressable>
+              ))
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }

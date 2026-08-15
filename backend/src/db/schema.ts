@@ -29,6 +29,23 @@ export const books = pgTable("books", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// Customers — institutes or individual buyers that receive books. Each
+// customer belongs to the distributor who created them, so distributors
+// maintain their own regular-customer list.
+export const customers = pgTable("customers", {
+  id: serial("id").primaryKey(),
+  distributorId: integer("distributor_id").references(() => users.id).notNull(),
+  name: text("name").notNull(),
+  type: text("type").$type<"institute" | "individual">().notNull().default("individual"),
+  contactPerson: text("contact_person"),
+  phone: text("phone"),
+  email: text("email"),
+  address: text("address"),
+  note: text("note"),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const distributorStock = pgTable("distributor_stock", {
   id: serial("id").primaryKey(),
   distributorId: integer("distributor_id").references(() => users.id).notNull(),
@@ -62,6 +79,7 @@ export const sales = pgTable("sales", {
   id: serial("id").primaryKey(),
   distributorId: integer("distributor_id").references(() => users.id).notNull(),
   bookId: integer("book_id").references(() => books.id).notNull(),
+  customerId: integer("customer_id").references(() => customers.id),
   quantity: integer("quantity").notNull(),
   unitPrice: numeric("unit_price", { precision: 12, scale: 2 }).notNull(),
   totalValue: numeric("total_value", { precision: 12, scale: 2 }).notNull(),
@@ -118,3 +136,4 @@ export const auditLog = pgTable("audit_log", {
 
 export type User = typeof users.$inferSelect;
 export type Book = typeof books.$inferSelect;
+export type Customer = typeof customers.$inferSelect;
