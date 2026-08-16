@@ -21,7 +21,8 @@ import { searchRouter } from "./routes/search";
 import { statementsRouter } from "./routes/statements";
 import { conflictsRouter } from "./routes/conflicts";
 import { migrationAuditRouter } from "./routes/migration-audit";
-import { uploadRouter } from "./routes/upload.route";
+// upload.route.ts exports the router as a DEFAULT export, not a named one.
+import uploadRouter from "./routes/upload.route";
 
 const app = express();
 app.use(cors({ origin: "*" }));
