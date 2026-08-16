@@ -152,10 +152,17 @@ reportsRouter.get("/trends", requireAuth, requireRole("super_admin", "inventory_
   const conds = buildSalesFilters(req.query);
   const salesWhere = conds.length ? and(...conds) : undefined;
 
-  const truncExpr = sql<string>`to_char(date_trunc(${bucket}, ${schema.sales.createdAt}), 'YYYY-MM-DD')`;
+  // Group + order on the SAME date_trunc expression that the SELECT uses.
+  // Previously the SELECT wrapped date_trunc in to_char() while GROUP BY used
+  // the to_char() form too, but Postgres still couldn't match the inner
+  // sales.created_at reference — grouping on the bare date_trunc expression
+  // (which references the column via an aggregate-safe grouping key) resolves
+  // the "must appear in GROUP BY" error.
+  const truncExpr = sql`date_trunc(${bucket}, ${schema.sales.createdAt})`;
+  const periodExpr = sql<string>`to_char(date_trunc(${bucket}, ${schema.sales.createdAt}), 'YYYY-MM-DD')`;
 
   const rows = await db.select({
-    period: truncExpr,
+    period: periodExpr,
     value: sql<string>`COALESCE(SUM(${schema.sales.totalValue}),0)`,
     copies: sql<string>`COALESCE(SUM(${schema.sales.quantity}),0)`,
   }).from(schema.sales)
