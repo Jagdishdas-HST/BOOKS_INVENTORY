@@ -152,13 +152,13 @@ reportsRouter.get("/trends", requireAuth, requireRole("super_admin", "inventory_
   const conds = buildSalesFilters(req.query);
   const salesWhere = conds.length ? and(...conds) : undefined;
 
-  // Group + order on the SAME date_trunc expression that the SELECT uses.
-  // Previously the SELECT wrapped date_trunc in to_char() while GROUP BY used
-  // the to_char() form too, but Postgres still couldn't match the inner
-  // sales.created_at reference — grouping on the bare date_trunc expression
-  // (which references the column via an aggregate-safe grouping key) resolves
-  // the "must appear in GROUP BY" error.
-  const truncExpr = sql`date_trunc(${bucket}, ${schema.sales.createdAt})`;
+  // FIX for `column "sales.created_at" must appear in the GROUP BY clause`:
+  // Drizzle re-serializes each `sql` template independently, so the
+  // date_trunc(...) expression built for the SELECT is NOT guaranteed to be
+  // byte-identical to a second one built for GROUP BY — Postgres then treats
+  // the inner sales.created_at reference as ungrouped. Grouping and ordering
+  // by the SELECT column's ordinal POSITION (`GROUP BY 1`) sidesteps
+  // expression matching entirely and is always valid here.
   const periodExpr = sql<string>`to_char(date_trunc(${bucket}, ${schema.sales.createdAt}), 'YYYY-MM-DD')`;
 
   const rows = await db.select({
@@ -168,8 +168,8 @@ reportsRouter.get("/trends", requireAuth, requireRole("super_admin", "inventory_
   }).from(schema.sales)
     .innerJoin(schema.books, eq(schema.sales.bookId, schema.books.id))
     .where(salesWhere)
-    .groupBy(truncExpr)
-    .orderBy(truncExpr);
+    .groupBy(sql`1`)
+    .orderBy(sql`1`);
 
   res.json({
     bucket,
