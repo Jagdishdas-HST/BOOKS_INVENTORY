@@ -59,12 +59,19 @@ app.use((req, res) => {
 app.use(errorHandler);
 
 const PORT = Number(process.env.PORT) || 3000;
-app.listen(PORT, async () => {
-  console.log(`[joylo-backend] API on ${PORT}`);
-  // Ensure demo accounts exist with valid hashes + active status so login works.
+
+// Seed demo accounts BEFORE the server accepts requests, so the very first
+// login can't race an unfinished seed. If the seed fails for any reason we
+// still start the server — the login route self-heals demo accounts on demand.
+async function start() {
   try {
     await seedDemoUsers();
   } catch (e) {
     console.error("[joylo-backend] failed to seed demo users:", e);
   }
-});
+  app.listen(PORT, () => {
+    console.log(`[joylo-backend] API on ${PORT}`);
+  });
+}
+
+start();
