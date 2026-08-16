@@ -1,5 +1,5 @@
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -22,9 +22,9 @@ import { API_URL } from "@/constants/api";
 const DEMO_ACCOUNTS = [
   { role: "Super Admin", username: "admin", password: "admin123", color: "#7c3aed", bg: "#ede9fe" },
   { role: "Manager", username: "manager", password: "manager123", color: "#0891b2", bg: "#cffafe" },
-  { role: "Distributor 1", username: "dist1", password: "dist123", color: "#059669", bg: "#d1fae5" },
-  { role: "Distributor 2", username: "dist2", password: "dist123", color: "#d97706", bg: "#fef3c7" },
-  { role: "Distributor 3", username: "dist3", password: "dist123", color: "#dc2626", bg: "#fee2e2" },
+  { role: "Distributor · Nitai Chand", username: "nitai", password: "nitai123", color: "#059669", bg: "#d1fae5" },
+  { role: "Distributor · Vraja Kishor", username: "vraja", password: "vraja123", color: "#d97706", bg: "#fef3c7" },
+  { role: "Distributor · Madhava Dasa", username: "madhava", password: "madhava123", color: "#dc2626", bg: "#fee2e2" },
 ];
 
 export default function LoginScreen() {
@@ -65,8 +65,9 @@ export default function LoginScreen() {
         setError(data?.error?.message ?? "Invalid credentials.");
         return;
       }
-      await AsyncStorage.setItem("auth_token", data.token);
-      await AsyncStorage.setItem("auth_user", JSON.stringify(data.user));
+      await AsyncStorage.setItem("authToken", data.token);
+      await AsyncStorage.setItem("authUser", JSON.stringify(data.user));
+      await AsyncStorage.setItem("lastOnlineAuthAt", new Date().toISOString());
       router.replace("/(tabs)");
     } catch {
       setError("Network error. Please try again.");
