@@ -70,6 +70,16 @@ export const useAuth = create<AuthState>((set) => ({
 }));
 
 /**
+ * Read the current auth session (token + user) from outside React components.
+ * Non-hook accessor over the zustand store — safe to call in plain functions,
+ * effects, and utility libs where hooks can't be used.
+ */
+export function getAuth(): { token: string | null; user: AuthUser | null } {
+  const { token, user } = useAuth.getState();
+  return { token, user };
+}
+
+/**
  * Read the stored JWT. Used by non-hook code (upload lib, offline queue).
  */
 export async function getToken(): Promise<string | null> {
