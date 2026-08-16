@@ -1,13 +1,13 @@
 
 import { db, schema } from "../db/client";
 import { hashPassword } from "./auth";
-import { eq, and } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 export async function seedIfEmpty() {
   const existing = await db.select().from(schema.users).limit(1);
   if (existing.length > 0) return;
 
-  // ── Users ──────────────────────────────────────────────────────────────────
+  // ── Users ────────────────────────────────────────────────────────────────
   const [admin] = await db.insert(schema.users).values({
     name: "Gopal Das",
     username: "admin",
@@ -43,7 +43,7 @@ export async function seedIfEmpty() {
     role: "distributor",
   }).returning();
 
-  // ── Books ──────────────────────────────────────────────────────────────────
+  // ── Books ─────────────────────────────────────────────────────────────────
   const bookRows = await db.insert(schema.books).values([
     {
       sku: "BG-EN-001",
@@ -183,7 +183,7 @@ export async function seedIfEmpty() {
     });
   }
 
-  // ── Audit: user creation ───────────────────────────────────────────────────
+  // ── Audit: user creation ────────────────────────────────────────────────────
   const now = new Date();
   const d = (daysAgo: number, hour = 10, min = 0) => {
     const t = new Date(now);
@@ -198,7 +198,7 @@ export async function seedIfEmpty() {
   await audit(admin.id, "create", "user", `Created distributor "Vraja Kishor" (ID: ${dist2.id})`, d(55));
   await audit(admin.id, "create", "user", `Created distributor "Madhava Dasa" (ID: ${dist3.id})`, d(50));
 
-  // ── Audit: book creation ───────────────────────────────────────────────────
+  // ── Audit: book creation ──────────────────────────────────────────────────
   for (const b of bookRows) {
     await audit(manager.id, "create", "book", `Added book "${b.title}" (SKU: ${b.sku}, ID: ${b.id})`, d(55));
   }
@@ -228,8 +228,9 @@ export async function seedIfEmpty() {
 
   for (const s of dist1Stock) {
     await db.insert(schema.distributorStock).values({ distributorId: dist1.id, bookId: s.bookId, quantity: s.quantity });
+    // Decrement warehouse stock by the assigned quantity using a proper SQL expression.
     await db.update(schema.books)
-      .set({ warehouseStock: db.$with("w").as(db.select().from(schema.books)) as any })
+      .set({ warehouseStock: sql`${schema.books.warehouseStock} - ${s.quantity}` })
       .where(eq(schema.books.id, s.bookId));
     await db.insert(schema.stockMovements).values({
       bookId: s.bookId, distributorId: dist1.id, quantity: s.quantity,
@@ -239,7 +240,7 @@ export async function seedIfEmpty() {
     await audit(manager.id, "assign", "stock", `+${s.quantity}x "${book.title}" (ID: ${book.id}) → Nitai Chand (ID: ${dist1.id})`, d(50));
   }
 
-  // ── Stock assignments: dist2 (Vraja Kishor) ────────────────────────────────
+  // ── Stock assignments: dist2 (Vraja Kishor) ─────────────────────────────────
   const dist2Stock = [
     { bookId: bg.id, quantity: 40 },
     { bookId: sb.id, quantity: 20 },
@@ -250,6 +251,9 @@ export async function seedIfEmpty() {
 
   for (const s of dist2Stock) {
     await db.insert(schema.distributorStock).values({ distributorId: dist2.id, bookId: s.bookId, quantity: s.quantity });
+    await db.update(schema.books)
+      .set({ warehouseStock: sql`${schema.books.warehouseStock} - ${s.quantity}` })
+      .where(eq(schema.books.id, s.bookId));
     await db.insert(schema.stockMovements).values({
       bookId: s.bookId, distributorId: dist2.id, quantity: s.quantity,
       type: "assign", movedById: manager.id, createdAt: d(48),
@@ -258,7 +262,7 @@ export async function seedIfEmpty() {
     await audit(manager.id, "assign", "stock", `+${s.quantity}x "${book.title}" (ID: ${book.id}) → Vraja Kishor (ID: ${dist2.id})`, d(48));
   }
 
-  // ── Stock assignments: dist3 (Madhava Dasa) ────────────────────────────────
+  // ── Stock assignments: dist3 (Madhava Dasa) ─────────────────────────────────
   const dist3Stock = [
     { bookId: bgHi.id, quantity: 25 },
     { bookId: bgBn.id, quantity: 20 },
@@ -269,6 +273,9 @@ export async function seedIfEmpty() {
 
   for (const s of dist3Stock) {
     await db.insert(schema.distributorStock).values({ distributorId: dist3.id, bookId: s.bookId, quantity: s.quantity });
+    await db.update(schema.books)
+      .set({ warehouseStock: sql`${schema.books.warehouseStock} - ${s.quantity}` })
+      .where(eq(schema.books.id, s.bookId));
     await db.insert(schema.stockMovements).values({
       bookId: s.bookId, distributorId: dist3.id, quantity: s.quantity,
       type: "assign", movedById: admin.id, createdAt: d(45),
@@ -277,7 +284,7 @@ export async function seedIfEmpty() {
     await audit(admin.id, "assign", "stock", `+${s.quantity}x "${book.title}" (ID: ${book.id}) → Madhava Dasa (ID: ${dist3.id})`, d(45));
   }
 
-  // ── Stock intake (warehouse replenishment) ─────────────────────────────────
+  // ── Stock intake (warehouse replenishment) ──────────────────────────────────
   const intakes = [
     { bookId: bg.id, quantity: 100, ref: "PO-2024-001", daysAgo: 40 },
     { bookId: ssr.id, quantity: 200, ref: "PO-2024-002", daysAgo: 35 },
@@ -295,8 +302,7 @@ export async function seedIfEmpty() {
     await audit(manager.id, "stock_in", "stock", `+${intake.quantity}x "${book.title}" (ID: ${book.id}) received (ref: ${intake.ref})`, d(intake.daysAgo));
   }
 
-  // ── Sales: dist1 (Nitai Chand) ─────────────────────────────────────────────
-  // Spread over last 45 days to give trend data
+  // ── Sales: dist1 (Nitai Chand) ──────────────────────────────────────────────
   const dist1Sales = [
     { bookId: bg.id, qty: 5, price: "350.00", type: "cash" as const, daysAgo: 44, hour: 10 },
     { bookId: nod.id, qty: 3, price: "250.00", type: "cash" as const, daysAgo: 42, hour: 11 },
@@ -337,7 +343,7 @@ export async function seedIfEmpty() {
     await audit(dist1.id, "sale", "sale", `Sale #${saleRow.id}: ${s.qty}x "${book.title}" (ID: ${book.id}) [${tag}] ₹${actualTotal} — by Nitai Chand (ID: ${dist1.id})`, saleDate);
   }
 
-  // ── Sales: dist2 (Vraja Kishor) ────────────────────────────────────────────
+  // ── Sales: dist2 (Vraja Kishor) ─────────────────────────────────────────────
   const dist2Sales = [
     { bookId: bg.id, qty: 8, price: "350.00", type: "cash" as const, daysAgo: 43, hour: 10 },
     { bookId: sb.id, qty: 3, price: "500.00", type: "online" as const, daysAgo: 40, hour: 11 },
@@ -372,7 +378,7 @@ export async function seedIfEmpty() {
     await audit(dist2.id, "sale", "sale", `Sale #${saleRow.id}: ${s.qty}x "${book.title}" (ID: ${book.id}) [${tag}] ₹${actualTotal} — by Vraja Kishor (ID: ${dist2.id})`, saleDate);
   }
 
-  // ── Sales: dist3 (Madhava Dasa) ────────────────────────────────────────────
+  // ── Sales: dist3 (Madhava Dasa) ─────────────────────────────────────────────
   const dist3Sales = [
     { bookId: bgHi.id, qty: 6, price: "300.00", type: "cash" as const, daysAgo: 42, hour: 10 },
     { bookId: bgBn.id, qty: 4, price: "290.00", type: "cash" as const, daysAgo: 38, hour: 11 },
@@ -404,7 +410,7 @@ export async function seedIfEmpty() {
     await audit(dist3.id, "sale", "sale", `Sale #${saleRow.id}: ${s.qty}x "${book.title}" (ID: ${book.id}) [${tag}] ₹${actualTotal} — by Madhava Dasa (ID: ${dist3.id})`, saleDate);
   }
 
-  // ── Remittances ────────────────────────────────────────────────────────────
+  // ── Remittances ─────────────────────────────────────────────────────────────
   const remittances = [
     { distId: dist1.id, distName: "Nitai Chand", amount: "3500.00", note: "Weekly collection - cash", daysAgo: 35 },
     { distId: dist1.id, distName: "Nitai Chand", amount: "2800.00", note: "Online transfer NEFT", daysAgo: 25 },
@@ -424,28 +430,28 @@ export async function seedIfEmpty() {
     await audit(r.distId, "remittance", "remittance", `Remittance #${remitRow.id}: ₹${r.amount} — ${r.note} — by ${r.distName} (ID: ${r.distId})`, remitDate);
   }
 
-  // ── Stock return ───────────────────────────────────────────────────────────
+  // ── Stock return ─────────────────────────────────────────────────────────────
   await db.insert(schema.stockMovements).values({
     bookId: nod.id, distributorId: dist1.id, quantity: 3,
     type: "return", reason: "unsold", movedById: manager.id, createdAt: d(20),
   });
   await audit(manager.id, "return", "stock", `3x "Nectar of Devotion" (ID: ${nod.id}) ← Nitai Chand (ID: ${dist1.id}) [unsold]`, d(20));
 
-  // ── Stock transfer ─────────────────────────────────────────────────────────
+  // ── Stock transfer ───────────────────────────────────────────────────────────
   await db.insert(schema.stockMovements).values({
     bookId: mag.id, distributorId: dist1.id, toDistributorId: dist3.id, quantity: 10,
     type: "transfer", reason: "Rebalancing territory", movedById: manager.id, createdAt: d(15),
   });
   await audit(manager.id, "transfer", "stock", `10x "Back to Godhead Magazine" (ID: ${mag.id}): Nitai Chand (ID: ${dist1.id}) → Madhava Dasa (ID: ${dist3.id}) [Rebalancing territory]`, d(15));
 
-  // ── Reconciliation ─────────────────────────────────────────────────────────
+  // ── Reconciliation ───────────────────────────────────────────────────────────
   await db.insert(schema.stockMovements).values({
     bookId: bgBn.id, distributorId: null, quantity: -2,
     type: "adjust", reason: "Physical count discrepancy", movedById: admin.id, createdAt: d(7),
   });
   await audit(admin.id, "adjust", "stock", `"Bhagavad-gita Bengali" (ID: ${bgBn.id}) warehouse: 20 → 18 [Physical count discrepancy]`, d(7));
 
-  // ── Admin activity logs ────────────────────────────────────────────────────
+  // ── Admin activity logs ─────────────────────────────────────────────────────
   await audit(admin.id, "login", "auth", `Admin "Gopal Das" (ID: ${admin.id}) signed in`, d(3, 8));
   await audit(manager.id, "login", "auth", `Manager "Radha Priya" (ID: ${manager.id}) signed in`, d(2, 9));
   await audit(dist1.id, "login", "auth", `Distributor "Nitai Chand" (ID: ${dist1.id}) signed in`, d(1, 8));
