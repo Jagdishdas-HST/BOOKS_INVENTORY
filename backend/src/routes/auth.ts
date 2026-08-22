@@ -7,7 +7,7 @@ import { validateBody } from "../middleware/validate";
 import { HttpError, asyncHandler } from "../lib/httpError";
 import { signToken, verifyPassword, requireAuth, type AuthedRequest } from "../lib/auth";
 import { logAudit } from "../lib/audit";
-import { healDemoUser } from "../lib/seed";
+import { DEMO_USERS, healDemoUser } from "../lib/seed";
 
 export const authRouter = Router();
 
@@ -20,24 +20,32 @@ authRouter.post("/login", validateBody(Login), asyncHandler(async (req, res) => 
   const { username, password } = req.body;
   const uname = String(username).trim().toLowerCase();
 
+  // Is this a known demo account? If so we can always repair it to match the
+  // advertised credentials.
+  const demo = DEMO_USERS.find((d) => d.username.toLowerCase() === uname);
+
   let [user] = await db.select().from(schema.users).where(eq(schema.users.username, uname));
 
-  // SELF-HEAL: if this is a known demo account that is missing, inactive, or
-  // whose password no longer matches, repair it right here and re-fetch. This
-  // guarantees the advertised demo credentials always authenticate, even if
-  // the boot-time seed hadn't finished or a previous state was inconsistent.
-  const passwordOk = user ? verifyPassword(password, user.passwordHash) : false;
-  if (!user || !user.active || !passwordOk) {
+  // Determine whether the current DB row already authenticates.
+  let passwordOk = user ? verifyPassword(password, user.passwordHash) : false;
+
+  // SELF-HEAL: for a known demo account, if the row is missing, inactive, or
+  // its password does not match, (re)create it with the correct hash and
+  // re-verify. This is what guarantees every advertised demo credential
+  // authenticates every single time, regardless of prior DB state or an
+  // unfinished boot-time seed.
+  if (demo && (!user || !user.active || !passwordOk)) {
     const healed = await healDemoUser(uname);
     if (healed) {
       user = healed;
+      passwordOk = verifyPassword(password, user.passwordHash);
     }
   }
 
   if (!user || !user.active) {
     throw new HttpError(401, "UNAUTHORIZED", "Invalid credentials or inactive account");
   }
-  if (!verifyPassword(password, user.passwordHash)) {
+  if (!passwordOk) {
     throw new HttpError(401, "UNAUTHORIZED", "Invalid credentials");
   }
 
