@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "paths": {
+      "@shared/*": [
+        "./shared/*"
+      ],
+      "@backend/*": [
+        "./backend/*"
+      ],
+      "@/*": [
+        "./frontend/src/*"
+      ]
+    }
+  }
+}
