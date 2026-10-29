@@ -1,4 +1,9 @@
 {
+  "scripts": {
+    "dev": "tsx backend/server.ts",
+    "start": "tsx backend/server.ts",
+    "build": "vite build && vite build --ssr"
+  },
   "dependencies": {
     "@radix-ui/react-tooltip": "^1.4.1",
     "@tanstack/react-query": "^5.105.0",
