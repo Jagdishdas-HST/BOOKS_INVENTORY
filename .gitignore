@@ -40,3 +40,9 @@ Thumbs.db
 # Joylo internal — not part of the user-facing project
 .joylo_pkg_hash
 deployment.yaml
+
+# Joylo: local-only files
+.env.*
+!.env.example
+.sync_metadata.db*
+.github-import-done
